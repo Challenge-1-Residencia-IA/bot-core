@@ -33,7 +33,7 @@ docker compose up -d   # sobe PostgreSQL + pgvector
 uvicorn app.main:app --reload
 ```
 
-O LLM local e o `ngrok` (para expor o webhook em desenvolvimento) rodam nativamente na máquina, fora do Docker — ver `decisoes-repositorios-huggingface.md` no diretório do projeto para o motivo.
+O LLM local e o `ngrok` (para expor o webhook em desenvolvimento) rodam nativamente na máquina, fora do Docker.
 
 ## Modelos e datasets
 
