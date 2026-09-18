@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+langgraph
+langchain-core
+psycopg[binary]
+pgvector
+tavily-python
+trafilatura
+beautifulsoup4
+python-dotenv
+requests
