@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 
@@ -58,6 +59,7 @@ REGRAS:
 - Mantenha um tom amigável e prestativo.
 - Responda em português (a menos que a mensagem recebida esteja em outro idioma).
 - Responda apenas à mensagem atual usando o contexto anterior para entender a conversa.
+- MENSAGENS DE ÁUDIO: Se o contato enviou uma mensagem de áudio (marcada como [Mensagem de Áudio]), informe com simpatia e clareza que no momento você não consegue ouvir mensagens de áudio e peça gentilmente para a pessoa enviar por texto.
 """
 
 
@@ -126,6 +128,36 @@ def gerar_resposta_groq(contexto, mensagem_atual):
 # FUNÇÕES DO WHATSAPP (SELETORES & DOM)
 # ============================================================
 
+def eh_mensagem_de_audio(mensagem):
+    """
+    Verifica se o elemento da mensagem é uma mensagem de voz ou áudio.
+    """
+    try:
+        seletores_audio = [
+            'button[aria-label*="Reproduzir"]',
+            'button[aria-label*="Play"]',
+            'button[aria-label*="áudio"]',
+            'button[aria-label*="voz"]',
+            '[data-testid="audio-play"]',
+            '[data-testid="voice-note-play"]',
+            '[data-icon="audio-play"]',
+            '[data-icon="ptt-play"]',
+            '[data-testid="audio-waveform"]',
+            'audio'
+        ]
+        if mensagem.locator(", ".join(seletores_audio)).count() > 0:
+            return True
+
+        texto_bruto = mensagem.inner_text().strip()
+        linhas = [l.strip() for l in texto_bruto.split("\n") if l.strip()]
+        for l in linhas:
+            if re.match(r"^\d{1,2}:\d{2}$", l) and len(linhas) <= 3:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def mensagem_eh_recebida(mensagem):
     """
     Identifica se a mensagem veio do contato (recebida)
@@ -173,15 +205,28 @@ def obter_mensagem_id(mensagem):
 
 def obter_texto_mensagem(mensagem):
     """
-    Extrai o texto legível da mensagem.
+    Extrai o texto legível da mensagem ou identifica se é mensagem de voz/áudio.
     """
     try:
+        if eh_mensagem_de_audio(mensagem):
+            texto_bruto = mensagem.inner_text().strip()
+            duracao_match = re.search(r"\b\d{1,2}:\d{2}\b", texto_bruto)
+            duracao = f" ({duracao_match.group(0)})" if duracao_match else ""
+            return f"[Mensagem de Áudio{duracao}]"
+
         elemento = mensagem.locator('[data-testid="selectable-text"]').first
         if elemento.count() > 0:
             texto = elemento.inner_text().strip()
             if texto:
+                if re.match(r"^\d{1,2}:\d{2}$", texto):
+                    return f"[Mensagem de Áudio ({texto})]"
                 return texto
-        return mensagem.inner_text().strip()
+
+        texto_geral = mensagem.inner_text().strip()
+        if re.match(r"^\d{1,2}:\d{2}$", texto_geral):
+            return f"[Mensagem de Áudio ({texto_geral})]"
+
+        return texto_geral
     except Exception:
         return ""
 
@@ -270,57 +315,69 @@ def encontrar_chats_nao_lidos(page):
     """
     Varre a lista lateral (#pane-side) procurando por conversas
     que possuam badge/indicador de mensagens não lidas.
-    Retorna uma lista de dicionários com informações do chat.
+    Ignora abas de filtro como 'Tudo', 'Não lidas', 'Grupos', etc.
     """
     chats_nao_lidos = []
+    nomes_filtros_ignorados = {
+        "tudo", "todas", "não lidas", "nao lidas", "favoritas", "favoritos",
+        "grupos", "all", "unread", "favorites", "groups", "conversas", "chats"
+    }
+
     try:
         pane = page.locator("#pane-side")
         if pane.count() == 0:
             return chats_nao_lidos
 
-        # Seletores comuns de badges de mensagens não lidas no WhatsApp Web
+        # Localiza as linhas de conversas na lista lateral
+        chat_rows = pane.locator('div[role="listitem"], div[role="row"]')
+        total_rows = chat_rows.count()
+
         seletores_badge = [
-            '#pane-side [aria-label*="não lida"]',
-            '#pane-side [aria-label*="não lidas"]',
-            '#pane-side [aria-label*="unread"]',
-            '#pane-side [data-testid="unread-count"]',
-            '#pane-side [data-testid="icon-unread-count"]',
-            '#pane-side span[aria-label*="mensagem não lida"]'
+            'span[aria-label*="não lida"]',
+            'span[aria-label*="não lidas"]',
+            'span[aria-label*="nao lida"]',
+            'span[aria-label*="unread"]',
+            '[data-testid="unread-count"]',
+            '[data-testid="icon-unread-count"]',
+            'span[aria-label*="mensagem não lida"]',
+            'span[aria-label*="mensagens não lidas"]'
         ]
+        badge_query = ", ".join(seletores_badge)
 
-        badges = page.locator(", ".join(seletores_badge))
-        total_badges = badges.count()
-
-        for i in range(total_badges):
-            badge = badges.nth(i)
+        for i in range(total_rows):
+            row = chat_rows.nth(i)
             try:
-                if not badge.is_visible():
+                if not row.is_visible():
                     continue
 
-                # Localiza a linha (row/listitem) da conversa no painel lateral
-                chat_row = badge.locator('xpath=ancestor::div[@role="listitem" or @role="row" or @tabindex="-1"][1]')
-                if chat_row.count() == 0:
-                    chat_row = badge.locator('xpath=ancestor::div[contains(@class, "x10l6tqk") or contains(@class, "_ak72")][1]')
+                # Ignora botões ou abas de filtro superiores
+                role = row.get_attribute("role") or ""
+                if role == "tab" or row.locator('[role="tab"]').count() > 0:
+                    continue
 
-                # Tenta extrair o nome do contato do chat na lista lateral
-                nome_contato = "Contato Desconhecido"
-                if chat_row.count() > 0:
-                    span_nome = chat_row.locator('span[title], span[dir="auto"]').first
-                    if span_nome.count() > 0:
-                        nome_contato = span_nome.get_attribute("title") or span_nome.inner_text().strip() or nome_contato
-                else:
-                    chat_row = badge
+                # Procura por badge de não lidas dentro deste chat
+                badge = row.locator(badge_query).first
+                if badge.count() == 0 or not badge.is_visible():
+                    continue
+
+                # Extrai o nome do contato
+                span_nome = row.locator('span[title], span[dir="auto"]').first
+                nome_contato = ""
+                if span_nome.count() > 0:
+                    nome_contato = (span_nome.get_attribute("title") or span_nome.inner_text()).strip()
+
+                if not nome_contato or nome_contato.lower() in nomes_filtros_ignorados:
+                    continue
 
                 chats_nao_lidos.append({
                     "nome": nome_contato,
-                    "elemento": chat_row if chat_row.count() > 0 else badge,
+                    "elemento": row,
                     "badge": badge
                 })
             except Exception:
                 continue
 
-    except Exception as erro:
-        # Falha transitória ao buscar elementos
+    except Exception:
         pass
 
     return chats_nao_lidos
@@ -334,9 +391,9 @@ def abrir_chat(page, info_chat):
         nome = info_chat.get("nome", "Contato")
         elemento = info_chat.get("elemento")
         if elemento and elemento.count() > 0:
-            print(f"🔄 Trocando para o chat: 💬 [{nome}]...")
+            print(f"🔄 Abrindo conversa: 💬 [{nome}]...")
             elemento.click()
-            time.sleep(1.0)
+            time.sleep(1.2)
             return True
     except Exception as erro:
         print(f"❌ Não foi possível abrir o chat {info_chat.get('nome')}: {erro}")
@@ -350,38 +407,55 @@ def abrir_chat(page, info_chat):
 def processar_chat_aberto(page, mensagens_processadas, mensagens_em_espera):
     """
     Analisa as mensagens no chat atualmente aberto na tela.
-    Identifica novas mensagens recebidas e gera a resposta (logando no console no modo Dry-Run).
+    Permite navegar pelas mensagens recebidas não respondidas:
+      - [ENTER] : Envia a resposta gerada.
+      - [X]     : Pula para a próxima mensagem da mesma conversa.
+      - [Z]     : Pula e fecha a conversa atual (sai para a próxima conversa da lista).
     """
     nome_chat = obter_nome_chat_ativo(page)
     mensagens = page.locator('[data-pre-plain-text]')
-    quantidade = mensagens.count()
+    total = mensagens.count()
+    if total == 0:
+        return 0
+
+    # Localiza o índice da última mensagem enviada por nós (para catalogar o histórico antigo)
+    ultimo_indice_enviado = -1
+    for i in range(total - 1, -1, -1):
+        if mensagem_eh_recebida(mensagens.nth(i)) is False:
+            ultimo_indice_enviado = i
+            break
+
+    # Marca todas as mensagens anteriores à nossa última resposta como já processadas
+    if ultimo_indice_enviado >= 0:
+        for j in range(0, ultimo_indice_enviado + 1):
+            m_id = obter_mensagem_id(mensagens.nth(j))
+            if m_id:
+                mensagens_processadas.add(m_id)
+
+    # O ponto de partida para mensagens recebidas pendentes
+    indice_inicial = max(0, ultimo_indice_enviado + 1)
     agora = time.time()
     novas_mensagens_processadas = 0
 
-    for i in range(quantidade):
+    for i in range(indice_inicial, total):
         mensagem = mensagens.nth(i)
         mensagem_id = obter_mensagem_id(mensagem)
 
         if not mensagem_id or mensagem_id in mensagens_processadas:
             continue
 
-        # Cooldown caso tenha falhado anteriormente
         if mensagem_id in mensagens_em_espera:
             if agora < mensagens_em_espera[mensagem_id]:
                 continue
             del mensagens_em_espera[mensagem_id]
 
-        texto = obter_texto_mensagem(mensagem)
-        if not texto:
-            continue
-
         recebida = mensagem_eh_recebida(mensagem)
-        if recebida is None:
-            # Mensagem de sistema ou não identificável
+        if recebida is not True:
             mensagens_processadas.add(mensagem_id)
             continue
-        if not recebida:
-            # Mensagem enviada pelo próprio bot/usuário
+
+        texto = obter_texto_mensagem(mensagem)
+        if not texto:
             mensagens_processadas.add(mensagem_id)
             continue
 
@@ -410,13 +484,37 @@ def processar_chat_aberto(page, mensagens_processadas, mensagens_em_espera):
             if MODO_DRY_RUN:
                 print("🔒 [MODO SIMULAÇÃO ATIVO] => A mensagem NÃO foi enviada ao contato.")
                 print("   (Para ativar o envio real, mude MODO_DRY_RUN = False)")
+                mensagens_processadas.add(mensagem_id)
+                novas_mensagens_processadas += 1
             else:
-                print("📤 Enviando resposta para o WhatsApp...")
-                enviar_mensagem(page, resposta)
-                print("✅ Resposta enviada com sucesso ao contato!")
+                print("\n⌨️  OPÇÕES DE AÇÃO:")
+                print("   👉 [ENTER] : Enviar esta resposta")
+                print("   👉 [X]     : Pular esta mensagem (ir para a próxima nesta conversa)")
+                print("   👉 [Z]     : Fechar conversa e ir para o próximo contato")
+                escolha = input("Escolha (ENTER = Enviar / X = Próx Msg / Z = Sair do Chat): ").strip().lower()
 
-            mensagens_processadas.add(mensagem_id)
-            novas_mensagens_processadas += 1
+                if escolha == "z":
+                    print("🚪 Fechando conversa atual e pulando para o próximo contato...")
+                    mensagens_processadas.add(mensagem_id)
+                    try:
+                        page.keyboard.press("Escape")
+                        time.sleep(0.3)
+                        page.keyboard.press("Escape")
+                    except Exception:
+                        pass
+                    return novas_mensagens_processadas
+
+                elif escolha == "x":
+                    print("⏭️ Mensagem pulada. Avançando para a próxima mensagem desta conversa...")
+                    mensagens_processadas.add(mensagem_id)
+                    continue
+
+                else:
+                    print("📤 Enviando resposta para o WhatsApp...")
+                    enviar_mensagem(page, resposta)
+                    print("✅ Resposta enviada com sucesso ao contato!")
+                    mensagens_processadas.add(mensagem_id)
+                    novas_mensagens_processadas += 1
 
         except Exception as erro:
             print(f"\n❌ Erro ao processar resposta: {erro}")
