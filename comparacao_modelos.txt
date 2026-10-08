@@ -1,0 +1,35 @@
+COMPARACAO DE MODELOS
+Mensagem testada: A Terra é plana?
+======================================================================
+
+MODELO: qwen2.5:7b
+----------------------------------------------------------------------
+Afirmações identificadas:
+1. A Terra é plana? — [classificação: opinião]
+2. A Terra é Redonda ou Plana? Descubra a Verdade — [classificação: título]
+
+O que precisa ser verificado:
+- Afirmação 1: [A Terra é considerada esférica pela ciência moderna, portanto esta afirmação está em conflito com o conhecimento científico atual.]
+- Afirmação 2: [Este título não contém uma afirmação específica a ser verificada.]
+
+Elementos de manipulação:
+- Apelo emocional (o título e conteúdo podem provocar curiosidade ou desafio)
+- Falsas opiniões sobre a ciência moderna
+- Falta de fonte confiável (as evidências apresentadas são genéricas)
+
+Nenhum elemento de manipulação identificado em Afirmação 2.
+
+MODELO: qwen2.5:3b
+----------------------------------------------------------------------
+Afirmações identificadas:
+1. A Terra é plana? — [classificação: opinião]
+2. A Terra é redonda ou plana? Descubra a Verdade — [classificação: informação fora de contexto]
+
+O que precisa ser verificado:
+- Afirmação 1: [o que deve ser checado]
+- Afirmação 2: [o que deve ser checado]
+
+Elementos de manipulação:
+- Urgência
+- Apelo emocional
+- Falta de fonte

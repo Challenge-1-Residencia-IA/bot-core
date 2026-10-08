@@ -1,0 +1,74 @@
+[
+  {
+    "mensagem": "A Terra é plana.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"A Terra é plana\" — Alegação científica\n\nO que precisa ser verificado:\n- Se a afirmação contradiz o consenso científico sobre a forma da Terra.\n\nElementos de manipulação:\n- Nenhum elemento de manipulação identificado.",
+    "modelo": "qwen2.5:7b",
+    "resposta": "Afirmações identificadas:\n1. A Terra é plana — [classificação: alegação científica ou informação fora de contexto]\n2. A Terra é redonda — [classificação: fato]\n\nO que precisa ser verificado:\n- Afirmação 1: O formato atual da Terra, com base em evidências científicas.\n- Afirmação 2: Não há necessidade de verificação, já que é um fato.\n\nElementos de manipulação:\n- Apelo emocional: A afirmação busca provocar reações emocionais por meio do questionamento dos conhecimentos científicos atualmente aceitos.\n- Falta de fonte: A afirmação \"A Terra é plana\" não fornece uma referência ou fonte confiável para a afirmação.\n\nNota: As evidências fornecidas são essencialmente utilizadas para refutar a ideia de que a Terra é plana, confirmando consistentemente sua esfericidade.",
+    "similaridade": 11.81,
+    "palavras_comuns": 22
+  },
+  {
+    "mensagem": "A Terra é plana.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"A Terra é plana\" — Alegação científica\n\nO que precisa ser verificado:\n- Se a afirmação contradiz o consenso científico sobre a forma da Terra.\n\nElementos de manipulação:\n- Nenhum elemento de manipulação identificado.",
+    "modelo": "qwen2.5:3b",
+    "resposta": "Afirmações identificadas:\n1. A Terra é plana — [classificação: opinião]\n2. A Terra é plana — [classificação: alegação científica ou informação fora de contexto]\n\nO que precisa ser verificado:\n- Afirmação 1: [o que deve ser checado]\n- Afirmação 2: [o que deve ser checado]\n\nElementos de manipulação:\n- Urgência\n- Apelo emocional\n- Falsa equivalência entre opiniões e evidências científicas",
+    "similaridade": 34.38,
+    "palavras_comuns": 19
+  },
+  {
+    "mensagem": "A Terra é plana.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"A Terra é plana\" — Alegação científica\n\nO que precisa ser verificado:\n- Se a afirmação contradiz o consenso científico sobre a forma da Terra.\n\nElementos de manipulação:\n- Nenhum elemento de manipulação identificado.",
+    "modelo": "llama3.1:8b",
+    "resposta": "Afirmações identificadas:\n1. A Terra é plana. — [classificação: opinião, alegação científica ou informação fora de contexto]\n2. A Terra não é nem perfeitamente plana nem uma esfera idealizada, mas um geoide – uma estrutura ligeiramente achatada nos polos devido à rotação. — [classificação: fato]\n\nO que precisa ser verificado:\n- Afirmação 1: A existência de evidências científicas que comprovem a esfericidade da Terra.\n- Afirmação 2: A definição correta do termo \"geoide\" e sua relação com a forma da Terra.\n\nElementos de manipulação:\n- Urgência (algumas fontes mencionam teorias conspiratórias e movimentos que ignoram leis físicas).\n- Fato de que a mensagem é baseada em opiniões, alegações científicas ou informações fora de contexto.",
+    "similaridade": 10.36,
+    "palavras_comuns": 22
+  },
+  {
+    "mensagem": "Governo anuncia que vai taxar o ar que respiramos.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"Governo anuncia que vai taxar o ar que respiramos\" — Sátira\n\nO que precisa ser verificado:\n- Se houve anúncio oficial do governo sobre taxação do ar.\n\nElementos de manipulação:\n- Uso de exagero para criar uma situação absurda.",
+    "modelo": "qwen2.5:7b",
+    "resposta": "Afirmações identificadas:\n1. Governo anuncia que vai taxar o ar que respiramos — opinião\n2. Haddad decide taxar o ar que você respira — sátira\n\nO que precisa ser verificado:\n- Afirmação 1: Essa afirmação é uma generalização baseada em boatos e não é mencionada nos documentos oficiais.\n- Afirmação 2: Esta afirmação também está presente nas evidências como um boato, portanto, seu status precisa ser verificado.\n\nElementos de manipulação:\n- Apelo emocional\n- Urgência\n- Falsas fontes (não há nenhuma evidência oficial ou fonte confiável que apóie essas afirmações)\n\nNota: Ambas as afirmações são baseadas em boatos e não encontram suporte em evidências oficiais.",
+    "similaridade": 27.02,
+    "palavras_comuns": 21
+  },
+  {
+    "mensagem": "Governo anuncia que vai taxar o ar que respiramos.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"Governo anuncia que vai taxar o ar que respiramos\" — Sátira\n\nO que precisa ser verificado:\n- Se houve anúncio oficial do governo sobre taxação do ar.\n\nElementos de manipulação:\n- Uso de exagero para criar uma situação absurda.",
+    "modelo": "qwen2.5:3b",
+    "resposta": "Afirmações identificadas:\n1. Governo anuncia que vai taxar o ar que respiramos. — [opinião]\n\nO que precisa ser verificado:\n- Afirmação 1: [o que deve ser checado]\n\nElementos de manipulação:\n- Urgência\n- Apelo emocional\n- Falta de fonte",
+    "similaridade": 61.91,
+    "palavras_comuns": 18
+  },
+  {
+    "mensagem": "Governo anuncia que vai taxar o ar que respiramos.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"Governo anuncia que vai taxar o ar que respiramos\" — Sátira\n\nO que precisa ser verificado:\n- Se houve anúncio oficial do governo sobre taxação do ar.\n\nElementos de manipulação:\n- Uso de exagero para criar uma situação absurda.",
+    "modelo": "llama3.1:8b",
+    "resposta": "Afirmações identificadas:\n1. Governo anuncia que vai taxar o ar que respiramos. — [classificação: fato, opinião, previsão, sátira, alegação científica ou informação fora de contexto]\n2. Governo anuncia que vai taxar o ar que respiramos. — [classificação]\n\nO que precisa ser verificado:\n- Afirmação 1: Verificar se há alguma evidência de que um governo realmente anunciou que irá taxar o ar que as pessoas respiram.\n- Afirmação 2: Identificar se a afirmativa é uma opinião, fato ou outra classificação.\n\nElementos de manipulação:\n- Urgência\n- Apelo emocional (por exemplo: \"PARECE PIADA MAS NÃO É!\")\n- Falta de fonte para apoiar a afirmação",
+    "similaridade": 7.6,
+    "palavras_comuns": 21
+  },
+  {
+    "mensagem": "O prefeito é o pior da história da cidade.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"O prefeito é o pior da história da cidade\" — Opinião\n\nO que precisa ser verificado:\n- Se há dados objetivos que comprovem essa afirmação.\n\nElementos de manipulação:\n- Generalização sem apresentar evidências.",
+    "modelo": "qwen2.5:7b",
+    "resposta": "Afirmações identificadas:\n1. O prefeito é o pior da história da cidade — [classificação: opinião]\n2. Haddad foi o pior prefeito da história de São Paulo — [classificação]\n3. Kalil foi pior prefeito da história em Belo Horizonte — [classificação]\n\nO que precisa ser verificado:\n- Afirmação 1: O que justifica a opinião do usuário sobre o prefeito.\n- Afirmação 2: Evidências sobre as realizações e fracassos de Haddad como prefeito.\n- Afirmação 3: Evidências sobre as realizações e fracassos de Kalil como prefeito.\n\nElementos de manipulação:\n- Apelo emocional\n- Falta de fonte\n\nNenhum elemento de manipulação identificado na Afirmação 1, pois a mensagem do usuário é clara e direta.",
+    "similaridade": 19.17,
+    "palavras_comuns": 19
+  },
+  {
+    "mensagem": "O prefeito é o pior da história da cidade.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"O prefeito é o pior da história da cidade\" — Opinião\n\nO que precisa ser verificado:\n- Se há dados objetivos que comprovem essa afirmação.\n\nElementos de manipulação:\n- Generalização sem apresentar evidências.",
+    "modelo": "qwen2.5:3b",
+    "resposta": "Afirmações identificadas:\n1. O prefeito é o pior da história da cidade — [classificação: opinião]\n2. Simões chama Kalil de pior prefeito de BH e ex-prefeito rebate — [classificação: opinião]\n\nO que precisa ser verificado:\n- Afirmação 1: [o que deve ser checado a respeito da afirmação sobre o prefeito ser o pior da história da cidade]\n- Afirmação 2: [o que deve ser checado a respeito da afirmação feita por Simões e pelo ex-prefeito]\n\nElementos de manipulação:\n- urgência, falta de fonte",
+    "similaridade": 41.05,
+    "palavras_comuns": 18
+  },
+  {
+    "mensagem": "O prefeito é o pior da história da cidade.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"O prefeito é o pior da história da cidade\" — Opinião\n\nO que precisa ser verificado:\n- Se há dados objetivos que comprovem essa afirmação.\n\nElementos de manipulação:\n- Generalização sem apresentar evidências.",
+    "modelo": "llama3.1:8b",
+    "resposta": "Afirmações identificadas:\n1. O prefeito é o pior da história da cidade. — [classificação: opinião]\n2. Haddad foi o pior prefeito da história de São Paulo, diz Nunes. — [classificação]\n\nO que precisa ser verificado:\n- Afirmação 1: A eficácia do governo atual e as críticas feitas a ele.\n- Afirmação 2: As declarações de Ricardo Nunes sobre Fernando Haddad.\n\nElementos de manipulação:\n- Urgência (a mensagem original faz referência ao prefeito como \"o pior da história\", o que pode criar uma sensação de urgência em quem está lendo);\n- Alegações científicas (nenhum elemento específico foi identificado, mas é possível que a crítica feita ao governo atual seja baseada em estatísticas ou dados econômicos).",
+    "similaridade": 9.14,
+    "palavras_comuns": 20
+  }
+]

@@ -1,0 +1,14 @@
+[
+  {
+    "mensagem": "A Terra é plana.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"A Terra é plana\" — Alegação científica\n\nO que precisa ser verificado:\n- Se a afirmação contradiz o consenso científico sobre a forma da Terra.\n\nElementos de manipulação:\n- Nenhum elemento de manipulação identificado."
+  },
+  {
+    "mensagem": "Governo anuncia que vai taxar o ar que respiramos.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"Governo anuncia que vai taxar o ar que respiramos\" — Sátira\n\nO que precisa ser verificado:\n- Se houve anúncio oficial do governo sobre taxação do ar.\n\nElementos de manipulação:\n- Uso de exagero para criar uma situação absurda."
+  },
+  {
+    "mensagem": "O prefeito é o pior da história da cidade.",
+    "resposta_esperada": "Afirmações identificadas:\n1. \"O prefeito é o pior da história da cidade\" — Opinião\n\nO que precisa ser verificado:\n- Se há dados objetivos que comprovem essa afirmação.\n\nElementos de manipulação:\n- Generalização sem apresentar evidências."
+  }
+]

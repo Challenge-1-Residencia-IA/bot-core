@@ -1,0 +1,4 @@
+__pycache__/
+.env
+dataset_fake_br.csv
+experimentos/

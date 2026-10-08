@@ -1,0 +1,56 @@
+from datasets import Dataset
+from ragas import evaluate
+from ragas.metrics import faithfulness, answer_relevancy
+from langchain_community.chat_models import ChatOllama
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from ragas.llms import LangchainLLMWrapper
+from ragas.embeddings import LangchainEmbeddingsWrapper
+from busca_web import buscar_na_web, analisar_com_ollama
+
+# ===================================================================
+# CONFIGURAÇÃO: Mude o nome do modelo aqui para testar outros
+# ===================================================================
+MODELO_PARA_AVALIAR = "qwen2.5:3b"  # Opções: "qwen2.5:3b", "qwen2.5:7b", "qwen3.5:7b"
+# ===================================================================
+
+# 1. Configura o Ollama como o "avaliador" do RAGAS
+#    Usamos o modelo de 7B como juiz, pois ele é mais confiável para essa tarefa[reference:6]
+avaliador_llm = LangchainLLMWrapper(ChatOllama(model="qwen2.5:7b"))
+
+# 2. Configura o modelo de embeddings (para traduzir texto em números)
+avaliador_embeddings = LangchainEmbeddingsWrapper(
+    HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+)
+
+# 3. Mensagem de teste (você pode adicionar mais)
+pergunta_teste = "A Terra é plana."
+
+print(f"Buscando evidencias para: '{pergunta_teste}'...")
+evidencias = buscar_na_web(pergunta_teste)
+
+print(f"Analisando com o modelo '{MODELO_PARA_AVALIAR}'...")
+# AQUI é onde o modelo é usado para gerar a resposta
+# Você precisará modificar a função 'analisar_com_ollama' para aceitar um parâmetro de modelo,
+# ou simplesmente trocar o modelo dentro do arquivo 'busca_web.py'
+resposta_ia = analisar_com_ollama(pergunta_teste, evidencias)
+
+# 4. Prepara os dados para o RAGAS
+contextos = [e["trecho"] for e in evidencias]
+dados = [{
+    "question": pergunta_teste,
+    "answer": resposta_ia,
+    "contexts": contextos
+}]
+dataset = Dataset.from_list(dados)
+
+# 5. Roda a avaliação
+print("Avaliando qualidade da resposta...")
+resultado = evaluate(
+    dataset,
+    metrics=[faithfulness, answer_relevancy],
+    llm=avaliador_llm,
+    embeddings=avaliador_embeddings
+)
+
+print("\n=== RESULTADO DA AVALIAÇÃO ===")
+print(resultado)
