@@ -1,7 +1,10 @@
+import asyncio
+from dataclasses import dataclass
 import os
 import re
 import sys
 import time
+from typing import Any, Dict, List, Optional
 
 # Garante suporte a UTF-8 no terminal Windows para exibição de emojis e caracteres especiais
 if sys.platform == "win32":
@@ -12,8 +15,8 @@ if sys.platform == "win32":
         pass
 
 from dotenv import load_dotenv
-from groq import Groq
-from playwright.sync_api import sync_playwright
+from groq import AsyncGroq
+from playwright.async_api import async_playwright
 
 
 # ============================================================
@@ -25,22 +28,44 @@ load_dotenv()
 # Modo de simulação (Dry-Run):
 # True  = Apenas monitora, lê chats não lidos, gera resposta com Groq e anota no console (NÃO envia mensagens)
 # False = Envia as respostas geradas diretamente no WhatsApp
-MODO_DRY_RUN = False
+MODO_DRY_RUN = True
 
 API_KEY_GROQ = os.getenv("GROQ_API_KEY")
 if not API_KEY_GROQ:
     print("⚠️ AVISO: GROQ_API_KEY não encontrada no arquivo .env!")
     groq_client = None
 else:
-    groq_client = Groq(api_key=API_KEY_GROQ)
-
+    groq_client = AsyncGroq(api_key=API_KEY_GROQ)
+    
 MODELO_PRINCIPAL = "qwen/qwen3.8-27b"
 MODELO_FALLBACK = "openai/gpt-oss-120b"
 
 PERFIL_WHATSAPP = "whatsapp_profile"
-INTERVALO_LOOP = 1.5
-COOLDOWN_ERRO = 15
-LIMITE_CONTEXTO = 15
+INTERVALO_SCANNER = 1.0       # Frequência de varredura de novas mensagens (segundos)
+NUM_WORKERS_IA = 5           # Quantidade de agentes de IA processando em paralelo
+LIMITE_CONTEXTO = 15          # Mensagens recentes no histórico para dar contexto à IA
+IGNORAR_GRUPOS = True         # Se True, ignora conversas e mensagens de grupos
+
+
+
+# ============================================================
+# ESTRUTURAS DE DADOS (FILAS E MENSAGENS)
+# ============================================================
+
+@dataclass
+class MensagemTarefa:
+    chat_nome: str
+    mensagem_id: str
+    texto: str
+    metadata: str
+    contexto: List[Dict[str, str]]
+
+
+@dataclass
+class RespostaTarefa:
+    chat_nome: str
+    mensagem_id: str
+    resposta_texto: str
 
 
 # ============================================================
@@ -64,13 +89,11 @@ REGRAS:
 
 
 # ============================================================
-# FUNÇÕES DE INTEGRAÇÃO COM A GROQ (IA)
+# INTEGRAÇÃO COM A GROQ (IA ASSÍNCRONA)
 # ============================================================
 
-def eh_erro_transitorio(erro):
-    """
-    Verifica se o erro da API é transitório (rate limit, timeout, etc).
-    """
+def eh_erro_transitorio(erro: Exception) -> bool:
+    """Verifica se o erro da API é transitório (rate limit, timeout, etc)."""
     msg = str(erro).upper()
     return any(termo in msg for termo in [
         "503", "UNAVAILABLE", "429", "RATE LIMIT", "RESOURCE_EXHAUSTED",
@@ -78,17 +101,16 @@ def eh_erro_transitorio(erro):
     ])
 
 
-def gerar_resposta_groq(contexto, mensagem_atual):
+async def gerar_resposta_groq_async(contexto: List[Dict[str, str]], mensagem_atual: str) -> str:
     """
-    Gera uma resposta usando Groq com base no contexto da conversa.
-    Tenta o MODELO_PRINCIPAL e, se falhar por instabilidade, tenta o MODELO_FALLBACK.
+    Gera uma resposta usando Groq assíncrono.
+    Tenta o MODELO_PRINCIPAL e, se falhar por instabilidade transitória, tenta o MODELO_FALLBACK.
     """
     if not groq_client:
         return "[Simulação] Chave GROQ_API_KEY não configurada no .env."
 
     mensagens = [{"role": "system", "content": INSTRUCOES}]
 
-    # Adiciona contexto recente (excluindo duplicações da mensagem atual se houver)
     if contexto:
         for c in contexto:
             if c.get("content") == mensagem_atual and c.get("role") == "user":
@@ -106,7 +128,7 @@ def gerar_resposta_groq(contexto, mensagem_atual):
 
     for nome_mod, mod in modelos:
         try:
-            resposta = groq_client.chat.completions.create(
+            resposta = await groq_client.chat.completions.create(
                 model=mod,
                 messages=mensagens,
                 temperature=0.7,
@@ -125,13 +147,11 @@ def gerar_resposta_groq(contexto, mensagem_atual):
 
 
 # ============================================================
-# FUNÇÕES DO WHATSAPP (SELETORES & DOM)
+# PARSER E EXTRAÇÃO DO DOM DO WHATSAPP (ASSÍNCRONO)
 # ============================================================
 
-def eh_mensagem_de_audio(mensagem):
-    """
-    Verifica se o elemento da mensagem é uma mensagem de voz ou áudio.
-    """
+async def eh_mensagem_de_audio(mensagem) -> bool:
+    """Verifica se o elemento da mensagem é uma mensagem de voz ou áudio."""
     try:
         seletores_audio = [
             'button[aria-label*="Reproduzir"]',
@@ -145,10 +165,10 @@ def eh_mensagem_de_audio(mensagem):
             '[data-testid="audio-waveform"]',
             'audio'
         ]
-        if mensagem.locator(", ".join(seletores_audio)).count() > 0:
+        if await mensagem.locator(", ".join(seletores_audio)).count() > 0:
             return True
 
-        texto_bruto = mensagem.inner_text().strip()
+        texto_bruto = (await mensagem.inner_text()).strip()
         linhas = [l.strip() for l in texto_bruto.split("\n") if l.strip()]
         for l in linhas:
             if re.match(r"^\d{1,2}:\d{2}$", l) and len(linhas) <= 3:
@@ -158,16 +178,13 @@ def eh_mensagem_de_audio(mensagem):
     return False
 
 
-def mensagem_eh_recebida(mensagem):
-    """
-    Identifica se a mensagem veio do contato (recebida)
-    ou se foi enviada pelo próprio usuário do bot.
-    """
+async def mensagem_eh_recebida(mensagem) -> Optional[bool]:
+    """Identifica se a mensagem veio do contato (True) ou se foi enviada por nós (False)."""
     try:
         atual = mensagem
         for _ in range(4):
             atual = atual.locator("xpath=..")
-        classe = atual.get_attribute("class") or ""
+        classe = (await atual.get_attribute("class")) or ""
 
         if "x1ew7x2d" in classe or "message-in" in classe:
             return True
@@ -177,25 +194,43 @@ def mensagem_eh_recebida(mensagem):
         parent_box = mensagem.locator(
             "xpath=ancestor::div[contains(@class, 'message-in') or contains(@class, 'message-out')]"
         ).first
-        if parent_box.count() > 0:
-            box_class = parent_box.get_attribute("class") or ""
+        if await parent_box.count() > 0:
+            box_class = (await parent_box.get_attribute("class")) or ""
             if "message-in" in box_class:
                 return True
             if "message-out" in box_class:
                 return False
     except Exception:
         pass
-
     return None
 
 
-def obter_mensagem_id(mensagem):
-    """
-    Gera um identificador único para a mensagem (data/hora + remetente + texto).
-    """
+async def obter_texto_mensagem(mensagem) -> str:
+    """Extrai o texto legível da mensagem ou identifica se é mensagem de voz/áudio."""
     try:
-        texto = obter_texto_mensagem(mensagem)
-        metadata = mensagem.get_attribute("data-pre-plain-text")
+        if await eh_mensagem_de_audio(mensagem):
+            texto_bruto = (await mensagem.inner_text()).strip()
+            duracao_match = re.search(r"\b\d{1,2}:\d{2}\b", texto_bruto)
+            duracao = f" ({duracao_match.group(0)})" if duracao_match else ""
+            return f"[Mensagem de Áudio{duracao}]"
+
+        elemento = mensagem.locator('[data-testid="selectable-text"]').first
+        if await elemento.count() > 0:
+            texto = (await elemento.inner_text()).strip()
+            if texto:
+                if re.match(r"^\d{1,2}:\d{2}$", texto):
+                    return f"[Mensagem de Áudio ({texto})]"
+                return texto
+        return (await mensagem.inner_text()).strip()
+    except Exception:
+        return ""
+
+
+async def obter_mensagem_id(mensagem) -> Optional[str]:
+    """Gera um identificador único para a mensagem (metadados + texto)."""
+    try:
+        texto = await obter_texto_mensagem(mensagem)
+        metadata = await mensagem.get_attribute("data-pre-plain-text")
         if not texto and not metadata:
             return None
         return f"{metadata or ''}|{texto}"
@@ -203,45 +238,14 @@ def obter_mensagem_id(mensagem):
         return None
 
 
-def obter_texto_mensagem(mensagem):
-    """
-    Extrai o texto legível da mensagem ou identifica se é mensagem de voz/áudio.
-    """
-    try:
-        if eh_mensagem_de_audio(mensagem):
-            texto_bruto = mensagem.inner_text().strip()
-            duracao_match = re.search(r"\b\d{1,2}:\d{2}\b", texto_bruto)
-            duracao = f" ({duracao_match.group(0)})" if duracao_match else ""
-            return f"[Mensagem de Áudio{duracao}]"
-
-        elemento = mensagem.locator('[data-testid="selectable-text"]').first
-        if elemento.count() > 0:
-            texto = elemento.inner_text().strip()
-            if texto:
-                if re.match(r"^\d{1,2}:\d{2}$", texto):
-                    return f"[Mensagem de Áudio ({texto})]"
-                return texto
-
-        texto_geral = mensagem.inner_text().strip()
-        if re.match(r"^\d{1,2}:\d{2}$", texto_geral):
-            return f"[Mensagem de Áudio ({texto_geral})]"
-
-        return texto_geral
-    except Exception:
-        return ""
-
-
-def obter_nome_chat_ativo(page):
-    """
-    Obtém o nome do contato ou grupo atualmente aberto no cabeçalho do WhatsApp.
-    """
+async def obter_nome_chat_ativo(page) -> str:
+    """Obtém o nome do contato ou grupo atualmente aberto no cabeçalho."""
     try:
         header = page.locator("header").first
-        if header.count() > 0:
-            # Tenta encontrar título pelo atributo title ou texto
+        if await header.count() > 0:
             titulo_elem = header.locator('span[title], div[role="button"] span[dir="auto"]').first
-            if titulo_elem.count() > 0:
-                nome = titulo_elem.get_attribute("title") or titulo_elem.inner_text().strip()
+            if await titulo_elem.count() > 0:
+                nome = (await titulo_elem.get_attribute("title")) or (await titulo_elem.inner_text()).strip()
                 if nome:
                     return nome
     except Exception:
@@ -249,23 +253,21 @@ def obter_nome_chat_ativo(page):
     return "Conversa Atual"
 
 
-def obter_contexto_conversa(page):
-    """
-    Lê o histórico recente da conversa aberta para enriquecer o contexto da IA.
-    """
+async def obter_contexto_conversa(page) -> List[Dict[str, str]]:
+    """Lê o histórico recente da conversa aberta para enriquecer o contexto da IA."""
     contexto = []
     try:
         mensagens = page.locator('[data-pre-plain-text]')
-        total = mensagens.count()
+        total = await mensagens.count()
         inicio = max(0, total - LIMITE_CONTEXTO)
 
         for i in range(inicio, total):
             msg = mensagens.nth(i)
-            texto = obter_texto_mensagem(msg)
+            texto = await obter_texto_mensagem(msg)
             if not texto:
                 continue
 
-            recebida = mensagem_eh_recebida(msg)
+            recebida = await mensagem_eh_recebida(msg)
             if recebida is True:
                 contexto.append({"role": "user", "content": texto})
             elif recebida is False:
@@ -275,11 +277,8 @@ def obter_contexto_conversa(page):
     return contexto
 
 
-def enviar_mensagem(page, texto):
-    """
-    Digita e envia uma mensagem no WhatsApp.
-    (Só é chamada se MODO_DRY_RUN for False).
-    """
+async def enviar_mensagem(page, texto: str):
+    """Digita e envia uma mensagem no WhatsApp."""
     texto = texto.strip()
     if not texto:
         return
@@ -293,7 +292,7 @@ def enviar_mensagem(page, texto):
     campo = None
     for sel in seletores:
         candidato = page.locator(sel).last
-        if candidato.count() > 0 and candidato.is_visible():
+        if (await candidato.count() > 0) and (await candidato.is_visible()):
             campo = candidato
             break
 
@@ -301,22 +300,151 @@ def enviar_mensagem(page, texto):
         print("⚠️ Caixa de digitação do WhatsApp não encontrada.")
         return
 
-    campo.click()
-    campo.fill(texto)
-    campo.press("Enter")
-    time.sleep(0.4)
+    await campo.click()
+    await campo.fill(texto)
+    await campo.press("Enter")
+    await asyncio.sleep(0.4)
+
+
+async def abrir_chat_por_nome(page, nome_contato: str) -> bool:
+    """
+    Localiza e abre o chat pelo nome na lista lateral ou pela barra de busca.
+    """
+    try:
+        # 1. Tenta clicar diretamente na linha visível do contato na barra lateral
+        chat_item = page.locator(f'#pane-side span[title="{nome_contato}"]').first
+        if await chat_item.count() > 0 and await chat_item.is_visible():
+            await chat_item.click()
+            await asyncio.sleep(0.6)
+            return True
+
+        # 2. Se não estiver visível diretamente, pesquisa na barra de busca do WhatsApp
+        search_box = page.locator('div[contenteditable="true"][data-tab="3"]').first
+        if await search_box.count() > 0:
+            await search_box.click()
+            await search_box.fill(nome_contato)
+            await asyncio.sleep(0.8)
+            resultado = page.locator(f'#pane-side span[title="{nome_contato}"]').first
+            if await resultado.count() > 0:
+                await resultado.click()
+                await asyncio.sleep(0.6)
+                # Limpa a busca
+                await page.keyboard.press("Escape")
+                return True
+    except Exception as erro:
+        print(f"❌ Erro ao tentar abrir chat '{nome_contato}': {erro}")
+    return False
+
+
+async def chat_eh_grupo(page, chat_row=None) -> bool:
+    """
+    Verifica se o chat atual (ou linha do chat) é um grupo ou comunidade.
+    Utiliza:
+    1. Nome do remetente vs Nome do Chat:
+       Em chats privados, o nome do chat é exatamente o nome do remetente.
+       Em grupos, o nome do chat é o título do grupo (ex: 'Comunidade Asgard'),
+       mas quem mandou a mensagem é outra pessoa (ex: '+55 61 9909-6090' ou 'Danilo').
+    2. Ícones e marcadores de grupo/comunidade na lista lateral e cabeçalho.
+    """
+    try:
+        # 1. Se fornecida a linha da lista lateral (#pane-side)
+        if chat_row:
+            seletores_lateral = [
+                '[data-icon="default-group"]',
+                '[data-icon="community"]',
+                '[data-icon="community-outline"]',
+                '[data-icon="newsletter"]',
+                '[data-testid="default-group"]',
+                '[data-testid="community-icon"]',
+                'span[data-icon*="group"]',
+                'span[data-icon*="community"]'
+            ]
+            for sel in seletores_lateral:
+                if await chat_row.locator(sel).count() > 0:
+                    return True
+
+            avatar = chat_row.locator('div[role="img"]').first
+            if await avatar.count() > 0:
+                rotulo = (await avatar.get_attribute("aria-label")) or ""
+                if any(termo in rotulo.lower() for termo in ["grupo", "group", "comunidade", "community"]):
+                    return True
+
+        # 2. Verificação por Remetente da Mensagem vs Nome do Chat
+        # Se quem enviou a mensagem tiver nome/número claramente diferente do nome do chat aberto, É GRUPO!
+        nome_chat = await obter_nome_chat_ativo(page)
+        mensagens = page.locator('[data-pre-plain-text]')
+        total_msgs = await mensagens.count()
+        if total_msgs > 0:
+            remetentes_recebidos = set()
+            inicio = max(0, total_msgs - 6)
+            for i in range(inicio, total_msgs):
+                msg = mensagens.nth(i)
+                if await mensagem_eh_recebida(msg) is True:
+                    pre_text = (await msg.get_attribute("data-pre-plain-text")) or ""
+                    match = re.search(r"\]\s*([^:]+):", pre_text)
+                    if match:
+                        remetente = match.group(1).strip()
+                        remetentes_recebidos.add(remetente)
+                        
+                        # Se o remetente for diferente do nome do chat, valida se não é apenas formatação de telefone
+                        if nome_chat and nome_chat not in ["Conversa Atual", ""]:
+                            rem_clean = re.sub(r"\D", "", remetente)
+                            chat_clean = re.sub(r"\D", "", nome_chat)
+                            
+                            # Se ambos têm números e coincidem (ex: +55 11 9999 vs 119999), é a mesma pessoa
+                            if rem_clean and chat_clean and (rem_clean in chat_clean or chat_clean in rem_clean):
+                                pass
+                            elif remetente.lower() != nome_chat.lower():
+                                return True
+
+            # Mais de um remetente em mensagens recebidas (100% grupo)
+            if len(remetentes_recebidos) > 1:
+                return True
+
+        # 3. Verificação no cabeçalho (header)
+        header = page.locator("header").first
+        if await header.count() > 0:
+            seletores_header_icone = [
+                '[data-icon="default-group"]',
+                '[data-icon="community"]',
+                '[data-testid="default-group"]',
+                '[data-testid="community-icon"]',
+                'span[data-icon*="group"]',
+                'span[data-icon*="community"]'
+            ]
+            for sel in seletores_header_icone:
+                if await header.locator(sel).count() > 0:
+                    return True
+
+            elementos_sub = header.locator('span[title], span[dir="auto"], div[role="button"] + span')
+            for i in range(await elementos_sub.count()):
+                elem = elementos_sub.nth(i)
+                texto = ((await elem.get_attribute("title")) or (await elem.inner_text()) or "").strip().lower()
+                if "," in texto or any(kw in texto for kw in [
+                    "clique aqui para dados do grupo",
+                    "click here for group info",
+                    "admin",
+                    "você, ",
+                    "you, ",
+                    "mensagens temporárias",
+                    "disappearing messages",
+                    "participantes",
+                    "participants"
+                ]):
+                    return True
+
+    except Exception:
+        pass
+
+    return False
 
 
 # ============================================================
-# DETECÇÃO DE CHATS NÃO LIDOS & TROCA DE CONVERSAS (CHAT SWITCHING)
+# DETECÇÃO DE CHATS NÃO LIDOS
 # ============================================================
 
-def encontrar_chats_nao_lidos(page):
-    """
-    Varre a lista lateral (#pane-side) procurando por conversas
-    que possuam badge/indicador de mensagens não lidas.
-    Ignora abas de filtro como 'Tudo', 'Não lidas', 'Grupos', etc.
-    """
+async def encontrar_chats_nao_lidos(page, chats_ignorados: set = None) -> List[Dict[str, Any]]:
+    """Varre #pane-side procurando por conversas com badge de não lidas."""
     chats_nao_lidos = []
     nomes_filtros_ignorados = {
         "tudo", "todas", "não lidas", "nao lidas", "favoritas", "favoritos",
@@ -325,12 +453,11 @@ def encontrar_chats_nao_lidos(page):
 
     try:
         pane = page.locator("#pane-side")
-        if pane.count() == 0:
+        if await pane.count() == 0:
             return chats_nao_lidos
 
-        # Localiza as linhas de conversas na lista lateral
         chat_rows = pane.locator('div[role="listitem"], div[role="row"]')
-        total_rows = chat_rows.count()
+        total_rows = await chat_rows.count()
 
         seletores_badge = [
             'span[aria-label*="não lida"]',
@@ -347,32 +474,35 @@ def encontrar_chats_nao_lidos(page):
         for i in range(total_rows):
             row = chat_rows.nth(i)
             try:
-                if not row.is_visible():
+                if not (await row.is_visible()):
                     continue
 
-                # Ignora botões ou abas de filtro superiores
-                role = row.get_attribute("role") or ""
-                if role == "tab" or row.locator('[role="tab"]').count() > 0:
+                role = (await row.get_attribute("role")) or ""
+                if role == "tab" or (await row.locator('[role="tab"]').count() > 0):
                     continue
 
-                # Procura por badge de não lidas dentro deste chat
                 badge = row.locator(badge_query).first
-                if badge.count() == 0 or not badge.is_visible():
+                if (await badge.count() == 0) or not (await badge.is_visible()):
                     continue
 
-                # Extrai o nome do contato
                 span_nome = row.locator('span[title], span[dir="auto"]').first
                 nome_contato = ""
-                if span_nome.count() > 0:
-                    nome_contato = (span_nome.get_attribute("title") or span_nome.inner_text()).strip()
+                if await span_nome.count() > 0:
+                    nome_contato = ((await span_nome.get_attribute("title")) or (await span_nome.inner_text())).strip()
 
                 if not nome_contato or nome_contato.lower() in nomes_filtros_ignorados:
                     continue
 
+                if chats_ignorados and nome_contato in chats_ignorados:
+                    continue
+
+                # Se a opção IGNORAR_GRUPOS estiver ativa e o chat for grupo, pula
+                if IGNORAR_GRUPOS and await chat_eh_grupo(page, chat_row=row):
+                    continue
+
                 chats_nao_lidos.append({
                     "nome": nome_contato,
-                    "elemento": row,
-                    "badge": badge
+                    "elemento": row
                 })
             except Exception:
                 continue
@@ -383,221 +513,345 @@ def encontrar_chats_nao_lidos(page):
     return chats_nao_lidos
 
 
-def abrir_chat(page, info_chat):
-    """
-    Clica na conversa para abri-la e aguarda o carregamento das mensagens.
-    """
-    try:
-        nome = info_chat.get("nome", "Contato")
-        elemento = info_chat.get("elemento")
-        if elemento and elemento.count() > 0:
-            print(f"🔄 Abrindo conversa: 💬 [{nome}]...")
-            elemento.click()
-            time.sleep(1.2)
-            return True
-    except Exception as erro:
-        print(f"❌ Não foi possível abrir o chat {info_chat.get('nome')}: {erro}")
-    return False
-
-
 # ============================================================
-# PROCESSAMENTO DE MENSAGENS NO CHAT ATUAL
+# TRÊS CAMADAS ASSÍNCRONAS: SCANNER, POOL DE IA E DESPACHANTE
 # ============================================================
 
-def processar_chat_aberto(page, mensagens_processadas, mensagens_em_espera):
+async def scanner_loop(
+    page,
+    fila_entrada: asyncio.Queue,
+    lock_pagina: asyncio.Lock,
+    mensagens_processadas: set,
+    chats_em_processamento: set,
+    chats_ignorados: set
+):
     """
-    Analisa as mensagens no chat atualmente aberto na tela.
-    Permite navegar pelas mensagens recebidas não respondidas:
-      - [ENTER] : Envia a resposta gerada.
-      - [X]     : Pula para a próxima mensagem da mesma conversa.
-      - [Z]     : Pula e fecha a conversa atual (sai para a próxima conversa da lista).
+    PRODUTOR: Varre o WhatsApp, abre chats não lidos rapidamente,
+    e também monitora o chat atualmente aberto na tela caso receba mensagens novas ao vivo.
     """
-    nome_chat = obter_nome_chat_ativo(page)
-    mensagens = page.locator('[data-pre-plain-text]')
-    total = mensagens.count()
-    if total == 0:
-        return 0
+    print("👀 [Scanner] Monitor de mensagens ativado (varrendo lista lateral + chat ativo)...")
+    ultimo_pulso = time.time()
 
-    # Localiza o índice da última mensagem enviada por nós (para catalogar o histórico antigo)
-    ultimo_indice_enviado = -1
-    for i in range(total - 1, -1, -1):
-        if mensagem_eh_recebida(mensagens.nth(i)) is False:
-            ultimo_indice_enviado = i
-            break
-
-    # Marca todas as mensagens anteriores à nossa última resposta como já processadas
-    if ultimo_indice_enviado >= 0:
-        for j in range(0, ultimo_indice_enviado + 1):
-            m_id = obter_mensagem_id(mensagens.nth(j))
-            if m_id:
-                mensagens_processadas.add(m_id)
-
-    # O ponto de partida para mensagens recebidas pendentes
-    indice_inicial = max(0, ultimo_indice_enviado + 1)
-    agora = time.time()
-    novas_mensagens_processadas = 0
-
-    for i in range(indice_inicial, total):
-        mensagem = mensagens.nth(i)
-        mensagem_id = obter_mensagem_id(mensagem)
-
-        if not mensagem_id or mensagem_id in mensagens_processadas:
-            continue
-
-        if mensagem_id in mensagens_em_espera:
-            if agora < mensagens_em_espera[mensagem_id]:
-                continue
-            del mensagens_em_espera[mensagem_id]
-
-        recebida = mensagem_eh_recebida(mensagem)
-        if recebida is not True:
-            mensagens_processadas.add(mensagem_id)
-            continue
-
-        texto = obter_texto_mensagem(mensagem)
-        if not texto:
-            mensagens_processadas.add(mensagem_id)
-            continue
-
-        metadata = mensagem.get_attribute("data-pre-plain-text") or ""
-
-        # Log detalhado da mensagem detectada
-        print("\n" + "═" * 70)
-        print(f"📩 NOVA MENSAGEM RECEBIDA!")
-        print(f"👤 Chat / Contato : {nome_chat}")
-        if metadata:
-            print(f"🕒 Metadados      : {metadata.strip()}")
-        print(f"💬 Conteúdo       : \"{texto}\"")
-        print("═" * 70)
-
+    while True:
         try:
-            contexto = obter_contexto_conversa(page)
-            print("🧠 Consultando Groq (Qwen / Fallback)...")
-            resposta = gerar_resposta_groq(contexto, texto)
+            # Pulso periódico no console a cada 15 segundos para confirmar que o scanner está vivo
+            if time.time() - ultimo_pulso > 15:
+                print("💓 [Scanner] Em espera... Nenhuma mensagem nova no momento.")
+                ultimo_pulso = time.time()
 
-            print("\n" + "─" * 70)
-            print("📋 RESPOSTA GERADA PELA IA:")
-            print("─" * 70)
-            print(resposta)
-            print("─" * 70)
+            # 1. Busca chats não lidos na lista lateral
+            chats_nao_lidos = []
+            async with lock_pagina:
+                chats_nao_lidos = await encontrar_chats_nao_lidos(page, chats_ignorados)
+
+            # 2. Se houver conversas não lidas na lista lateral, abre e processa
+            if chats_nao_lidos:
+                for chat_info in chats_nao_lidos:
+                    nome = chat_info["nome"]
+
+                    if nome in chats_em_processamento or nome in chats_ignorados:
+                        continue
+
+                    async with lock_pagina:
+                        try:
+                            await chat_info["elemento"].click()
+                            await asyncio.sleep(0.4)
+                        except Exception:
+                            continue
+
+                        # Se for grupo, ignora
+                        if IGNORAR_GRUPOS and await chat_eh_grupo(page):
+                            print(f"👥 [Scanner] Grupo detectado e ignorado: '{nome}'")
+                            chats_ignorados.add(nome)
+                            continue
+
+                        mensagens = page.locator('[data-pre-plain-text]')
+                        total = await mensagens.count()
+                        if total == 0:
+                            continue
+
+                        ultima_msg = mensagens.last
+                        msg_id = await obter_mensagem_id(ultima_msg)
+
+                        if not msg_id or msg_id in mensagens_processadas:
+                            continue
+
+                        recebida = await mensagem_eh_recebida(ultima_msg)
+                        if recebida is not True:
+                            mensagens_processadas.add(msg_id)
+                            continue
+
+                        texto = await obter_texto_mensagem(ultima_msg)
+                        if not texto:
+                            mensagens_processadas.add(msg_id)
+                            continue
+
+                        metadata = (await ultima_msg.get_attribute("data-pre-plain-text")) or ""
+                        contexto = await obter_contexto_conversa(page)
+
+                        mensagens_processadas.add(msg_id)
+                        chats_em_processamento.add(nome)
+
+                        tarefa = MensagemTarefa(
+                            chat_nome=nome,
+                            mensagem_id=msg_id,
+                            texto=texto,
+                            metadata=metadata,
+                            contexto=contexto
+                        )
+
+                        await fila_entrada.put(tarefa)
+
+                        print("\n" + "📥" * 35)
+                        print(f"⚡ [Scanner] MENSAGEM ENFILEIRADA DA LISTA LATERAL!")
+                        print(f"👤 Contato   : {nome}")
+                        print(f"💬 Mensagem  : \"{texto}\"")
+                        print(f"📊 Fila de Espera: {fila_entrada.qsize()} tarefa(s)")
+                        print("📥" * 35 + "\n")
+            else:
+                # 3. Se não houver chats com bolinha verde, monitora o chat que já está ABERTO na tela
+                async with lock_pagina:
+                    nome_ativo = await obter_nome_chat_ativo(page)
+                    if nome_ativo and nome_ativo != "Conversa Atual":
+                        if nome_ativo in chats_ignorados:
+                            pass
+                        elif nome_ativo in chats_em_processamento:
+                            pass
+                        elif IGNORAR_GRUPOS and await chat_eh_grupo(page):
+                            chats_ignorados.add(nome_ativo)
+                            print(f"👥 [Scanner] Chat aberto é grupo ignorado: '{nome_ativo}'")
+                        else:
+                            mensagens = page.locator('[data-pre-plain-text]')
+                            total = await mensagens.count()
+                            if total > 0:
+                                ultima_msg = mensagens.last
+                                msg_id = await obter_mensagem_id(ultima_msg)
+
+                                if msg_id and msg_id not in mensagens_processadas:
+                                    recebida = await mensagem_eh_recebida(ultima_msg)
+                                    if recebida is True:
+                                        texto = await obter_texto_mensagem(ultima_msg)
+                                        if texto:
+                                            metadata = (await ultima_msg.get_attribute("data-pre-plain-text")) or ""
+                                            contexto = await obter_contexto_conversa(page)
+
+                                            mensagens_processadas.add(msg_id)
+                                            chats_em_processamento.add(nome_ativo)
+
+                                            tarefa = MensagemTarefa(
+                                                chat_nome=nome_ativo,
+                                                mensagem_id=msg_id,
+                                                texto=texto,
+                                                metadata=metadata,
+                                                contexto=contexto
+                                            )
+                                            await fila_entrada.put(tarefa)
+
+                                            print("\n" + "📥" * 35)
+                                            print(f"⚡ [Scanner] MENSAGEM ENFILEIRADA DO CHAT ATIVO NA TELA!")
+                                            print(f"👤 Contato   : {nome_ativo}")
+                                            print(f"💬 Mensagem  : \"{texto}\"")
+                                            print(f"📊 Fila de Espera: {fila_entrada.qsize()} tarefa(s)")
+                                            print("📥" * 35 + "\n")
+                                    else:
+                                        mensagens_processadas.add(msg_id)
+
+            await asyncio.sleep(INTERVALO_SCANNER)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as erro:
+            print(f"⚠️ [Scanner] Erro na varredura: {erro}")
+            await asyncio.sleep(1.5)
+
+
+async def worker_ia_loop(
+    worker_id: int,
+    fila_entrada: asyncio.Queue,
+    fila_saida: asyncio.Queue
+):
+    """
+    WORKER / AGENTE DE IA: Puxa tarefas da fila_entrada e gera
+    respostas via Groq de forma paralela e não bloqueante.
+    """
+    print(f"🤖 [Worker IA {worker_id}] Pronto e aguardando tarefas...")
+
+    while True:
+        try:
+            tarefa: MensagemTarefa = await fila_entrada.get()
+
+            print(f"🧠 [Worker IA {worker_id}] Processando resposta para '{tarefa.chat_nome}'...")
+            t_inicio = time.time()
+
+            try:
+                resposta = await gerar_resposta_groq_async(tarefa.contexto, tarefa.texto)
+                duracao = time.time() - t_inicio
+
+                print(f"✨ [Worker IA {worker_id}] Resposta gerada para '{tarefa.chat_nome}' em {duracao:.2f}s!")
+
+                resp_tarefa = RespostaTarefa(
+                    chat_nome=tarefa.chat_nome,
+                    mensagem_id=tarefa.mensagem_id,
+                    resposta_texto=resposta
+                )
+                await fila_saida.put(resp_tarefa)
+
+            except Exception as erro:
+                print(f"❌ [Worker IA {worker_id}] Erro ao gerar resposta para '{tarefa.chat_nome}': {erro}")
+
+            finally:
+                fila_entrada.task_done()
+
+        except asyncio.CancelledError:
+            break
+        except Exception as erro:
+            print(f"⚠️ [Worker IA {worker_id}] Erro inesperado: {erro}")
+            await asyncio.sleep(1.0)
+
+
+async def dispatcher_loop(
+    page,
+    fila_saida: asyncio.Queue,
+    lock_pagina: asyncio.Lock,
+    chats_em_processamento: set
+):
+    """
+    CONSUMIDOR / DESPACHANTE: Puxa respostas prontas da fila_saida,
+    localiza o chat correspondente no WhatsApp e realiza o envio seguro.
+    """
+    print("📤 [Despachante] Inicializado e aguardando respostas prontas...")
+
+    while True:
+        try:
+            resposta_tarefa: RespostaTarefa = await fila_saida.get()
+
+            print("\n" + "═" * 70)
+            print(f"🚀 [Despachante] ENVIANDO RESPOSTA PRONTA")
+            print(f"👤 Destinatário: {resposta_tarefa.chat_nome}")
+            print(f"💬 Resposta:\n{resposta_tarefa.resposta_texto}")
+            print("═" * 70)
 
             if MODO_DRY_RUN:
-                print("🔒 [MODO SIMULAÇÃO ATIVO] => A mensagem NÃO foi enviada ao contato.")
-                print("   (Para ativar o envio real, mude MODO_DRY_RUN = False)")
-                mensagens_processadas.add(mensagem_id)
-                novas_mensagens_processadas += 1
+                print("🔒 [MODO SIMULAÇÃO] Resposta NÃO enviada ao WhatsApp.")
             else:
-                print("\n⌨️  OPÇÕES DE AÇÃO:")
-                print("   👉 [ENTER] : Enviar esta resposta")
-                print("   👉 [X]     : Pular esta mensagem (ir para a próxima nesta conversa)")
-                print("   👉 [Z]     : Fechar conversa e ir para o próximo contato")
-                escolha = input("Escolha (ENTER = Enviar / X = Próx Msg / Z = Sair do Chat): ").strip().lower()
+                async with lock_pagina:
+                    # Verifica se o chat já está aberto ou precisa ser aberto
+                    nome_atual = await obter_nome_chat_ativo(page)
+                    if nome_atual != resposta_tarefa.chat_nome:
+                        print(f"🔄 [Despachante] Navegando para o chat de '{resposta_tarefa.chat_nome}'...")
+                        sucesso = await abrir_chat_por_nome(page, resposta_tarefa.chat_nome)
+                        if not sucesso:
+                            print(f"⚠️ Não foi possível abrir o chat de '{resposta_tarefa.chat_nome}'. Tentando novamente mais tarde.")
+                            # Reenfileira para tentar depois
+                            await fila_saida.put(resposta_tarefa)
+                            fila_saida.task_done()
+                            await asyncio.sleep(1.0)
+                            continue
 
-                if escolha == "z":
-                    print("🚪 Fechando conversa atual e pulando para o próximo contato...")
-                    mensagens_processadas.add(mensagem_id)
-                    try:
-                        page.keyboard.press("Escape")
-                        time.sleep(0.3)
-                        page.keyboard.press("Escape")
-                    except Exception:
-                        pass
-                    return novas_mensagens_processadas
+                    await enviar_mensagem(page, resposta_tarefa.resposta_texto)
+                    print(f"✅ [Despachante] Mensagem enviada com sucesso para '{resposta_tarefa.chat_nome}'!")
 
-                elif escolha == "x":
-                    print("⏭️ Mensagem pulada. Avançando para a próxima mensagem desta conversa...")
-                    mensagens_processadas.add(mensagem_id)
-                    continue
+            # Libera o contato para receber novas perguntas
+            chats_em_processamento.discard(resposta_tarefa.chat_nome)
+            fila_saida.task_done()
 
-                else:
-                    print("📤 Enviando resposta para o WhatsApp...")
-                    enviar_mensagem(page, resposta)
-                    print("✅ Resposta enviada com sucesso ao contato!")
-                    mensagens_processadas.add(mensagem_id)
-                    novas_mensagens_processadas += 1
-
+        except asyncio.CancelledError:
+            break
         except Exception as erro:
-            print(f"\n❌ Erro ao processar resposta: {erro}")
-            mensagens_em_espera[mensagem_id] = time.time() + COOLDOWN_ERRO
-            print(f"⏳ Tentará novamente em {COOLDOWN_ERRO}s.\n")
-
-    return novas_mensagens_processadas
+            print(f"⚠️ [Despachante] Erro no envio: {erro}")
+            await asyncio.sleep(1.0)
 
 
 # ============================================================
 # FLUXO PRINCIPAL DE EXECUÇÃO
 # ============================================================
 
-def main():
+async def main_async():
     print("=" * 70)
-    print("🤖 BOT WHATSAPP - MONITOR DE CHATS & LEITURA DE NÃO LIDAS")
+    print("🤖 BOT WHATSAPP MULTI-AGENTES & SISTEMA DE FILAS ASSÍNCRONAS")
     print(f"⚙️  Modo Atual: {'🔒 SIMULAÇÃO / DRY-RUN (Apenas Console)' if MODO_DRY_RUN else '🚀 PRODUÇÃO (Envio Real Ativado)'}")
     print(f"🧠 Modelos Groq: Principal = {MODELO_PRINCIPAL} | Fallback = {MODELO_FALLBACK}")
+    print(f"⚡ Workers de IA Concorrentes: {NUM_WORKERS_IA}")
     print("=" * 70)
     print()
 
-    with sync_playwright() as p:
+    # Filas e estruturas de sincronização
+    fila_entrada = asyncio.Queue()
+    fila_saida = asyncio.Queue()
+    lock_pagina = asyncio.Lock()
+    mensagens_processadas = set()
+    chats_em_processamento = set()
+    chats_ignorados = set()
+
+    async with async_playwright() as p:
         print("🌐 Inicializando Chromium...")
-        context = p.chromium.launch_persistent_context(
+        context = await p.chromium.launch_persistent_context(
             PERFIL_WHATSAPP,
             headless=False,
             viewport={"width": 1280, "height": 850}
         )
 
-        page = context.pages[0] if context.pages else context.new_page()
+        page = context.pages[0] if context.pages else await context.new_page()
 
         print("🔗 Acessando WhatsApp Web...")
-        page.goto("https://web.whatsapp.com")
+        await page.goto("https://web.whatsapp.com")
 
         print("⏳ Aguardando carregamento da interface do WhatsApp...")
         try:
-            page.wait_for_selector("#pane-side", timeout=60000)
+            await page.wait_for_selector("#pane-side", timeout=60000)
             print("✅ WhatsApp Web conectado e carregado com sucesso!")
         except Exception:
             print("\n⚠️ O painel lateral ainda não foi detectado.")
             print("👉 Se necessário, escaneie o QR Code no navegador.")
-            input("👉 Pressione ENTER quando o WhatsApp estiver logado...")
+            await asyncio.to_thread(input, "👉 Pressione ENTER quando o WhatsApp estiver logado...")
 
-        # Mapeia mensagens do chat atualmente aberto (se houver) para não reprocessar histórico antigo
-        mensagens_processadas = set()
-        mensagens_em_espera = {}
-
+        # Mapeia mensagens antigas do chat aberto, mas deixa a última para ser processada se for recebida
         try:
             mensagens_iniciais = page.locator('[data-pre-plain-text]')
-            for i in range(mensagens_iniciais.count()):
-                msg_id = obter_mensagem_id(mensagens_iniciais.nth(i))
+            total_iniciais = await mensagens_iniciais.count()
+            # Mapeia todas menos a última
+            for i in range(max(0, total_iniciais - 1)):
+                msg_id = await obter_mensagem_id(mensagens_iniciais.nth(i))
                 if msg_id:
                     mensagens_processadas.add(msg_id)
             print(f"📚 {len(mensagens_processadas)} mensagens antigas catalogadas.")
         except Exception:
             pass
 
-        print("\n👀 Monitorando lista de conversas e mensagens não lidas...\n")
+        print("\n🚀 Iniciando pipelines assíncronos (Scanner + Workers + Despachante)...\n")
 
-        while True:
-            try:
-                # 1. Busca conversas com indicador de mensagens não lidas na lista lateral
-                chats_nao_lidos = encontrar_chats_nao_lidos(page)
+        # Inicializa o pool de tarefas concorrentes
+        tarefas = []
 
-                if chats_nao_lidos:
-                    print(f"🔔 Detectado(s) {len(chats_nao_lidos)} chat(s) com mensagem(ns) não lida(s)!")
-                    for chat_info in chats_nao_lidos:
-                        sucesso = abrir_chat(page, chat_info)
-                        if sucesso:
-                            processar_chat_aberto(page, mensagens_processadas, mensagens_em_espera)
-                            time.sleep(0.8)
-                else:
-                    # 2. Se não houver chats não lidos pendentes, monitora o chat ativo na tela
-                    processar_chat_aberto(page, mensagens_processadas, mensagens_em_espera)
+        # 1. Scanner (Produtor)
+        tarefas.append(asyncio.create_task(
+            scanner_loop(page, fila_entrada, lock_pagina, mensagens_processadas, chats_em_processamento, chats_ignorados)
+        ))
 
-                time.sleep(INTERVALO_LOOP)
+        # 2. Pool de Workers IA
+        for worker_id in range(1, NUM_WORKERS_IA + 1):
+            tarefas.append(asyncio.create_task(
+                worker_ia_loop(worker_id, fila_entrada, fila_saida)
+            ))
 
-            except KeyboardInterrupt:
-                print("\n🛑 Bot finalizado pelo usuário via terminal.")
-                break
-            except Exception as erro:
-                print(f"\n⚠️ Erro durante o loop de monitoramento: {erro}")
-                time.sleep(2)
+        # 3. Despachante (Consumidor)
+        tarefas.append(asyncio.create_task(
+            dispatcher_loop(page, fila_saida, lock_pagina, chats_em_processamento)
+        ))
+
+        try:
+            await asyncio.gather(*tarefas)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print("\n🛑 Finalizando bot e cancelando tarefas assíncronas...")
+            for t in tarefas:
+                t.cancel()
+
+
+def main():
+    try:
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        print("\n👋 Programa encerrado pelo usuário.")
 
 
 if __name__ == "__main__":
