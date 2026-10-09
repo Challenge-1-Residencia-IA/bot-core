@@ -2,8 +2,6 @@ import requests
 import json
 from ddgs import DDGS
 from bs4 import BeautifulSoup
-from sentence_transformers import SentenceTransformer
-from neon_serverless import neon
 
 # ===================================================================
 # CONFIGURACAO DO BANCO VETORIAL
