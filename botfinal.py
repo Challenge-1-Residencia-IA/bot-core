@@ -17,6 +17,7 @@ if sys.platform == "win32":
 from dotenv import load_dotenv
 from groq import AsyncGroq
 from playwright.async_api import async_playwright
+from database import init_database, save_message
 
 
 # ============================================================
@@ -28,7 +29,7 @@ load_dotenv()
 # Modo de simulação (Dry-Run):
 # True  = Apenas monitora, lê chats não lidos, gera resposta com Groq e anota no console (NÃO envia mensagens)
 # False = Envia as respostas geradas diretamente no WhatsApp
-MODO_DRY_RUN = True
+MODO_DRY_RUN = False
 
 API_KEY_GROQ = os.getenv("GROQ_API_KEY")
 if not API_KEY_GROQ:
@@ -36,7 +37,7 @@ if not API_KEY_GROQ:
     groq_client = None
 else:
     groq_client = AsyncGroq(api_key=API_KEY_GROQ)
-    
+
 MODELO_PRINCIPAL = "qwen/qwen3.8-27b"
 MODELO_FALLBACK = "openai/gpt-oss-120b"
 
@@ -73,9 +74,9 @@ class RespostaTarefa:
 # ============================================================
 
 INSTRUCOES = """
-Você é um assistente conversacional inteligente que responde pelo WhatsApp.
+Você é um assistente conversacional inteligente que responde pelo WhatsApp focado em responder fake news.
 
-Seu objetivo é responder de forma natural, direta, amigável e concisa.
+Seu objetivo é responder de forma natural, direta, amigável e concisa. Sendo um tipo de tutor para ajudar pessoas a desmascarar mensagens tendenciosas ou falsas. Seu objetivo não é necessariamente falar se é falso ou verdadeiro, mas sim fornecer informações confiáveis, links de referência e contexto para que o usuário possa tomar sua própria decisão.
 
 REGRAS:
 - Seja direto e responda em tom de mensagem de WhatsApp.
@@ -241,7 +242,7 @@ async def obter_mensagem_id(mensagem) -> Optional[str]:
 async def obter_nome_chat_ativo(page) -> str:
     """Obtém o nome do contato ou grupo atualmente aberto no cabeçalho."""
     try:
-        header = page.locator("header").first
+        header = page.locator("#main header").first
         if await header.count() > 0:
             titulo_elem = header.locator('span[title], div[role="button"] span[dir="auto"]').first
             if await titulo_elem.count() > 0:
@@ -257,7 +258,7 @@ async def obter_contexto_conversa(page) -> List[Dict[str, str]]:
     """Lê o histórico recente da conversa aberta para enriquecer o contexto da IA."""
     contexto = []
     try:
-        mensagens = page.locator('[data-pre-plain-text]')
+        mensagens = page.locator('#main [data-pre-plain-text]')
         total = await mensagens.count()
         inicio = max(0, total - LIMITE_CONTEXTO)
 
@@ -275,6 +276,7 @@ async def obter_contexto_conversa(page) -> List[Dict[str, str]]:
     except Exception:
         pass
     return contexto
+
 
 
 async def enviar_mensagem(page, texto: str):
@@ -310,41 +312,82 @@ async def abrir_chat_por_nome(page, nome_contato: str) -> bool:
     """
     Localiza e abre o chat pelo nome na lista lateral ou pela barra de busca.
     """
+    if not nome_contato:
+        return False
+
     try:
-        # 1. Tenta clicar diretamente na linha visível do contato na barra lateral
-        chat_item = page.locator(f'#pane-side span[title="{nome_contato}"]').first
+        # 1. Tenta clicar diretamente na linha do contato na barra lateral (#pane-side)
+        chat_item = page.locator('#pane-side').locator(f'span[title="{nome_contato}"]').first
         if await chat_item.count() > 0 and await chat_item.is_visible():
             await chat_item.click()
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.5)
+            return True
+
+        # Tenta localizar por texto na linha do chat
+        chat_by_text = page.locator('#pane-side div[role="listitem"], #pane-side div[role="row"]').filter(has_text=nome_contato).first
+        if await chat_by_text.count() > 0 and await chat_by_text.is_visible():
+            await chat_by_text.click()
+            await asyncio.sleep(0.5)
             return True
 
         # 2. Se não estiver visível diretamente, pesquisa na barra de busca do WhatsApp
-        search_box = page.locator('div[contenteditable="true"][data-tab="3"]').first
-        if await search_box.count() > 0:
+        seletores_busca = [
+            '[data-testid="chat-list-search"]',
+            '#side div[contenteditable="true"]',
+            'div[contenteditable="true"][data-tab="3"]',
+            'div[contenteditable="true"][role="textbox"]'
+        ]
+
+        search_box = None
+        for sel in seletores_busca:
+            candidato = page.locator(sel).first
+            if await candidato.count() > 0 and await candidato.is_visible():
+                search_box = candidato
+                break
+
+        if search_box:
             await search_box.click()
             await search_box.fill(nome_contato)
             await asyncio.sleep(0.8)
-            resultado = page.locator(f'#pane-side span[title="{nome_contato}"]').first
+
+            # Procura o resultado da busca
+            resultado = page.locator('#pane-side').locator(f'span[title="{nome_contato}"]').first
+            if await resultado.count() == 0:
+                resultado = page.locator('#pane-side div[role="listitem"]').filter(has_text=nome_contato).first
+
             if await resultado.count() > 0:
                 await resultado.click()
                 await asyncio.sleep(0.6)
                 # Limpa a busca
                 await page.keyboard.press("Escape")
                 return True
+            else:
+                await page.keyboard.press("Escape")
     except Exception as erro:
         print(f"❌ Erro ao tentar abrir chat '{nome_contato}': {erro}")
     return False
+
+
+
+async def fechar_chat_ativo(page):
+    """
+    Deseleciona/fecha a conversa atualmente aberta no WhatsApp Web,
+    retornando à tela inicial para permitir que novas mensagens gerem badges na barra lateral.
+    """
+    try:
+        await page.keyboard.press("Escape")
+        await asyncio.sleep(0.3)
+    except Exception:
+        pass
 
 
 async def chat_eh_grupo(page, chat_row=None) -> bool:
     """
     Verifica se o chat atual (ou linha do chat) é um grupo ou comunidade.
     Utiliza:
-    1. Nome do remetente vs Nome do Chat:
-       Em chats privados, o nome do chat é exatamente o nome do remetente.
-       Em grupos, o nome do chat é o título do grupo (ex: 'Comunidade Asgard'),
-       mas quem mandou a mensagem é outra pessoa (ex: '+55 61 9909-6090' ou 'Danilo').
-    2. Ícones e marcadores de grupo/comunidade na lista lateral e cabeçalho.
+    1. Ícones e marcadores de grupo/comunidade na lista lateral e no cabeçalho do CHAT ATIVO (#main header).
+    2. Presença de múltiplos remetentes distintos nas mensagens do chat aberto (#main).
+    3. Descrição/Subtítulo no cabeçalho (#main header) (ex: participantes, dados do grupo).
     """
     try:
         # 1. Se fornecida a linha da lista lateral (#pane-side)
@@ -369,54 +412,21 @@ async def chat_eh_grupo(page, chat_row=None) -> bool:
                 if any(termo in rotulo.lower() for termo in ["grupo", "group", "comunidade", "community"]):
                     return True
 
-        # 2. Verificação por Remetente da Mensagem vs Nome do Chat
-        # Se quem enviou a mensagem tiver nome/número claramente diferente do nome do chat aberto, É GRUPO!
-        nome_chat = await obter_nome_chat_ativo(page)
-        mensagens = page.locator('[data-pre-plain-text]')
-        total_msgs = await mensagens.count()
-        if total_msgs > 0:
-            remetentes_recebidos = set()
-            inicio = max(0, total_msgs - 6)
-            for i in range(inicio, total_msgs):
-                msg = mensagens.nth(i)
-                if await mensagem_eh_recebida(msg) is True:
-                    pre_text = (await msg.get_attribute("data-pre-plain-text")) or ""
-                    match = re.search(r"\]\s*([^:]+):", pre_text)
-                    if match:
-                        remetente = match.group(1).strip()
-                        remetentes_recebidos.add(remetente)
-                        
-                        # Se o remetente for diferente do nome do chat, valida se não é apenas formatação de telefone
-                        if nome_chat and nome_chat not in ["Conversa Atual", ""]:
-                            rem_clean = re.sub(r"\D", "", remetente)
-                            chat_clean = re.sub(r"\D", "", nome_chat)
-                            
-                            # Se ambos têm números e coincidem (ex: +55 11 9999 vs 119999), é a mesma pessoa
-                            if rem_clean and chat_clean and (rem_clean in chat_clean or chat_clean in rem_clean):
-                                pass
-                            elif remetente.lower() != nome_chat.lower():
-                                return True
-
-            # Mais de um remetente em mensagens recebidas (100% grupo)
-            if len(remetentes_recebidos) > 1:
-                return True
-
-        # 3. Verificação no cabeçalho (header)
-        header = page.locator("header").first
-        if await header.count() > 0:
+        # 2. Verificação no cabeçalho do CHAT ATIVO (#main header)
+        # Importante: usar '#main header' para NÃO confundir com o cabeçalho da barra lateral (#side header)!
+        main_header = page.locator("#main header").first
+        if await main_header.count() > 0:
             seletores_header_icone = [
                 '[data-icon="default-group"]',
                 '[data-icon="community"]',
                 '[data-testid="default-group"]',
-                '[data-testid="community-icon"]',
-                'span[data-icon*="group"]',
-                'span[data-icon*="community"]'
+                '[data-testid="community-icon"]'
             ]
             for sel in seletores_header_icone:
-                if await header.locator(sel).count() > 0:
+                if await main_header.locator(sel).count() > 0:
                     return True
 
-            elementos_sub = header.locator('span[title], span[dir="auto"], div[role="button"] + span')
+            elementos_sub = main_header.locator('span[title], span[dir="auto"], div[role="button"] + span')
             for i in range(await elementos_sub.count()):
                 elem = elementos_sub.nth(i)
                 texto = ((await elem.get_attribute("title")) or (await elem.inner_text()) or "").strip().lower()
@@ -426,17 +436,35 @@ async def chat_eh_grupo(page, chat_row=None) -> bool:
                     "admin",
                     "você, ",
                     "you, ",
-                    "mensagens temporárias",
-                    "disappearing messages",
                     "participantes",
                     "participants"
                 ]):
                     return True
 
+        # 3. Verificação por Múltiplos Remetentes distintos nas mensagens do chat aberto (#main)
+        mensagens = page.locator('#main [data-pre-plain-text]')
+        total_msgs = await mensagens.count()
+        if total_msgs > 0:
+            remetentes_recebidos = set()
+            inicio = max(0, total_msgs - 10)
+            for i in range(inicio, total_msgs):
+                msg = mensagens.nth(i)
+                if await mensagem_eh_recebida(msg) is True:
+                    pre_text = (await msg.get_attribute("data-pre-plain-text")) or ""
+                    match = re.search(r"\]\s*([^:]+):", pre_text)
+                    if match:
+                        remetente = match.group(1).strip()
+                        remetentes_recebidos.add(remetente)
+
+            # Mais de um remetente em mensagens recebidas -> Grupo!
+            if len(remetentes_recebidos) > 1:
+                return True
+
     except Exception:
         pass
 
     return False
+
 
 
 # ============================================================
@@ -613,9 +641,7 @@ async def scanner_loop(
                 async with lock_pagina:
                     nome_ativo = await obter_nome_chat_ativo(page)
                     if nome_ativo and nome_ativo != "Conversa Atual":
-                        if nome_ativo in chats_ignorados:
-                            pass
-                        elif nome_ativo in chats_em_processamento:
+                        if nome_ativo in chats_ignorados or nome_ativo in chats_em_processamento:
                             pass
                         elif IGNORAR_GRUPOS and await chat_eh_grupo(page):
                             chats_ignorados.add(nome_ativo)
@@ -638,6 +664,15 @@ async def scanner_loop(
                                             mensagens_processadas.add(msg_id)
                                             chats_em_processamento.add(nome_ativo)
 
+                                            # Persistência local no banco de dados SQLite
+                                            save_message(
+                                                chat_nome=nome_ativo,
+                                                mensagem_id=msg_id,
+                                                role="user",
+                                                texto=texto,
+                                                metadata=metadata
+                                            )
+
                                             tarefa = MensagemTarefa(
                                                 chat_nome=nome_ativo,
                                                 mensagem_id=msg_id,
@@ -655,6 +690,8 @@ async def scanner_loop(
                                             print("📥" * 35 + "\n")
                                     else:
                                         mensagens_processadas.add(msg_id)
+
+
 
             await asyncio.sleep(INTERVALO_SCANNER)
 
@@ -733,6 +770,8 @@ async def dispatcher_loop(
 
             if MODO_DRY_RUN:
                 print("🔒 [MODO SIMULAÇÃO] Resposta NÃO enviada ao WhatsApp.")
+                async with lock_pagina:
+                    await fechar_chat_ativo(page)
             else:
                 async with lock_pagina:
                     # Verifica se o chat já está aberto ou precisa ser aberto
@@ -751,9 +790,22 @@ async def dispatcher_loop(
                     await enviar_mensagem(page, resposta_tarefa.resposta_texto)
                     print(f"✅ [Despachante] Mensagem enviada com sucesso para '{resposta_tarefa.chat_nome}'!")
 
+                    # Fecha o chat ativo para retornar à tela inicial e permitir que novas mensagens gerem badges
+                    await fechar_chat_ativo(page)
+
+            # Persistência local (SQLite) da resposta do assistente
+            asst_msg_id = f"assistant_{resposta_tarefa.mensagem_id}_{int(time.time())}"
+            save_message(
+                chat_nome=resposta_tarefa.chat_nome,
+                mensagem_id=asst_msg_id,
+                role="assistant",
+                texto=resposta_tarefa.resposta_texto
+            )
+
             # Libera o contato para receber novas perguntas
             chats_em_processamento.discard(resposta_tarefa.chat_nome)
             fila_saida.task_done()
+
 
         except asyncio.CancelledError:
             break
