@@ -3,7 +3,7 @@ import json
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel
-from busca_web import buscar_na_web, buscar_padroes_similares, analisar_com_ollama
+from busca_web import buscar_na_web, analisar_com_ollama
 from neon_serverless import neon
 
 # Carregar variáveis de ambiente do arquivo .env
@@ -41,20 +41,11 @@ def analisar(mensagem: Mensagem):
     evidencias = buscar_na_web(mensagem.texto)
     print(f"[INFO] Encontradas {len(evidencias)} evidencias")
     
-    # 2. Buscar padrões similares no banco vetorial
-    print("[INFO] Buscando padroes similares no banco...")
-    try:
-        padroes = buscar_padroes_similares(mensagem.texto, limite=3)
-        print(f"[INFO] Encontrados {len(padroes)} padroes")
-    except Exception as e:
-        print(f"[AVISO] Falha na busca vetorial: {e}")
-        padroes = []
-    
-    # 3. Analisar com IA (incluindo web + padrões)
+    # 2. Analisar com IA
     print("[INFO] Analisando com IA...")
-    analise = analisar_com_ollama(mensagem.texto, evidencias, padroes, modelo="qwen2.5:7b")
+    analise = analisar_com_ollama(mensagem.texto, evidencias, modelo="qwen2.5:7b")
     
-    # 4. Salvar no banco de dados
+    # 3. Salvar no banco de dados
     print("[INFO] Salvando no banco de dados...")
     try:
         sql(
@@ -76,8 +67,5 @@ def analisar(mensagem: Mensagem):
     return {
         "mensagem": mensagem.texto,
         "total_evidencias": len(evidencias),
-        "total_padroes": len(padroes),
-        "evidencias": evidencias,
-        "padroes_similares": padroes,
         "analise": analise
     }
