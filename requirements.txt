@@ -1,5 +1,2 @@
-playwright>=1.40.0
-groq>=0.11.0
-python-dotenv>=1.0.0
-requests>=2.31.0
-
+arq[redis]>=0.24
+pyyaml
