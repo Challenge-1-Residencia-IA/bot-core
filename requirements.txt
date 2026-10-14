@@ -1,11 +1,26 @@
+# Núcleo: API, orquestração e fila
 fastapi
 uvicorn[standard]
 langgraph
 langchain-core
-psycopg[binary]
-pgvector
-tavily-python
-trafilatura
-beautifulsoup4
+arq
+pyyaml
 python-dotenv
 requests
+
+# Guardrails
+nemoguardrails
+langdetect
+
+# Busca de evidências e RAG
+ddgs
+trafilatura
+beautifulsoup4
+sentence-transformers
+
+# Banco (Postgres + pgvector)
+psycopg[binary]
+pgvector
+
+# Desenvolvimento
+pytest
