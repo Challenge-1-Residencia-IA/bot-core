@@ -144,7 +144,7 @@ class _Chamadas:
 def pagina_falsa(monkeypatch):
     chamadas = _Chamadas()
 
-    async def enviar_mensagem(page, texto):
+    async def enviar_mensagem(page, texto, *_args):
         chamadas.enviadas.append(texto)
 
     async def fechar_chat_ativo(page):
@@ -157,7 +157,6 @@ def pagina_falsa(monkeypatch):
         return True
 
     monkeypatch.setattr(dispatcher, "enviar_mensagem", enviar_mensagem)
-    monkeypatch.setattr(dispatcher, "fechar_chat_ativo", fechar_chat_ativo)
     monkeypatch.setattr(dispatcher, "obter_nome_chat_ativo", obter_nome_chat_ativo)
     monkeypatch.setattr(dispatcher, "abrir_chat_por_nome", abrir_chat_por_nome)
     monkeypatch.setitem(CONFIG, "contatos_permitidos", ["Maria"])

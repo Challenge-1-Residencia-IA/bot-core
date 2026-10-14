@@ -17,7 +17,6 @@ import asyncio
 import logging
 from .utils.playwright_utils import (
     abrir_chat_por_nome,
-    fechar_chat_ativo,
     enviar_mensagem,
     obter_nome_chat_ativo,
 )
@@ -55,8 +54,6 @@ async def dispatcher_loop(page, lock, fila_respostas: asyncio.Queue, store):
             if CONFIG["mode_dry_run"]:
                 logging.info("🔒 [MODO SIMULAÇÃO] Resposta NÃO enviada ao WhatsApp.")
                 store.state(chave, "dry_run")
-                async with lock:
-                    await fechar_chat_ativo(page)
                 continue
 
             if resposta_tarefa.chat_nome not in CONFIG["contatos_permitidos"]:
@@ -83,10 +80,9 @@ async def dispatcher_loop(page, lock, fila_respostas: asyncio.Queue, store):
                     logging.warning("⚠️ [Despachante] Envio %s não reservado (estado %s); ignorado.",
                                     chave[:12], store.get(chave))
                     continue
-                await enviar_mensagem(page, resposta_tarefa.resposta_texto)
+                await enviar_mensagem(page, resposta_tarefa.resposta_texto, resposta_tarefa.chat_nome)
                 store.state(chave, "sent")
-                logging.info("✅ [Despachante] Mensagem enviada com sucesso para '%s'!", resposta_tarefa.chat_nome)
-                await fechar_chat_ativo(page)
+                logging.info("✅ [Despachante] Envio confirmado na interface para '%s'", resposta_tarefa.chat_nome)
         except asyncio.CancelledError:
             if store.get(chave) == "sending":
                 store.state(chave, "uncertain")

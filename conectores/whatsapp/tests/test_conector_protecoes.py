@@ -136,7 +136,7 @@ class PaginaFalsa:
 def pagina(monkeypatch):
     page = PaginaFalsa()
 
-    async def enviar_mensagem(p, texto):
+    async def enviar_mensagem(p, texto, *_args):
         if p.falha_envio:
             raise RuntimeError("send_unconfirmed")
         p.enviadas.append(texto)
@@ -154,7 +154,6 @@ def pagina(monkeypatch):
         return p.abre
 
     monkeypatch.setattr(dispatcher, "enviar_mensagem", enviar_mensagem)
-    monkeypatch.setattr(dispatcher, "fechar_chat_ativo", fechar_chat_ativo)
     monkeypatch.setattr(dispatcher, "obter_nome_chat_ativo", obter_nome_chat_ativo)
     monkeypatch.setattr(dispatcher, "abrir_chat_por_nome", abrir_chat_por_nome)
     monkeypatch.setitem(CONFIG, "mode_dry_run", False)
@@ -293,31 +292,18 @@ def test_midia_com_legenda_vai_para_o_nucleo(chat_falso, store):
     assert len(pool.chamadas) == 1
 
 
-class ElementoFalso:
-    def __init__(self, nome, cliques):
-        self.nome = nome
-        self.cliques = cliques
-
-    async def click(self):
-        self.cliques.append(self.nome)
-
-
 def test_scanner_nem_abre_chat_fora_da_lista(monkeypatch, chat_falso, store):
-    cliques = []
+    abertos = []
 
-    async def encontrar_chats_nao_lidos(page):
-        return [{"nome": n, "elemento": ElementoFalso(n, cliques)} for n in ("Estranho", "Maria")]
+    async def abrir_chat_por_nome(page, nome):
+        abertos.append(nome)
+        return True
 
     async def falso(*_args, **_kwargs):
         return False
 
-    async def sem_chat(page):
-        return None
-
-    monkeypatch.setattr(scanner, "encontrar_chats_nao_lidos", encontrar_chats_nao_lidos)
+    monkeypatch.setattr(scanner, "abrir_chat_por_nome", abrir_chat_por_nome)
     monkeypatch.setattr(scanner, "chat_eh_grupo", falso)
-    monkeypatch.setattr(scanner, "abrir_chat_por_nome", falso)
-    monkeypatch.setattr(scanner, "obter_nome_chat_ativo", sem_chat)
     config = dict(CONFIG, contatos_permitidos=["Maria"], intervalo_scanner=0.01)
 
     async def cenario():
@@ -329,21 +315,17 @@ def test_scanner_nem_abre_chat_fora_da_lista(monkeypatch, chat_falso, store):
         await asyncio.gather(tarefa, return_exceptions=True)
 
     asyncio.run(cenario())
-    assert "Estranho" not in cliques
-    assert "Maria" in cliques
+    assert set(abertos) == {"Maria"}
 
 
 def test_scanner_com_lista_vazia_nao_abre_nada(monkeypatch, chat_falso, store):
-    cliques = []
+    abertos = []
 
-    async def encontrar_chats_nao_lidos(page):
-        return [{"nome": "Maria", "elemento": ElementoFalso("Maria", cliques)}]
+    async def abrir_chat_por_nome(page, nome):
+        abertos.append(nome)
+        return True
 
-    async def sem_chat(page):
-        return "Maria"
-
-    monkeypatch.setattr(scanner, "encontrar_chats_nao_lidos", encontrar_chats_nao_lidos)
-    monkeypatch.setattr(scanner, "obter_nome_chat_ativo", sem_chat)
+    monkeypatch.setattr(scanner, "abrir_chat_por_nome", abrir_chat_por_nome)
     config = dict(CONFIG, contatos_permitidos=[], intervalo_scanner=0.01)
     pool = PoolFalso()
 
@@ -356,4 +338,4 @@ def test_scanner_com_lista_vazia_nao_abre_nada(monkeypatch, chat_falso, store):
         await asyncio.gather(tarefa, return_exceptions=True)
 
     asyncio.run(cenario())
-    assert cliques == [] and pool.chamadas == []
+    assert abertos == [] and pool.chamadas == []

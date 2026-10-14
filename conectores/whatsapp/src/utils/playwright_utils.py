@@ -6,18 +6,27 @@ They are imported as:
     from conectores.whatsapp.src.utils.playwright_utils import (
         abrir_navegador, fechar_navegador,
         abrir_chat_por_nome, fechar_chat_ativo, obter_nome_chat_ativo,
-        enviar_mensagem, encontrar_chats_nao_lidos, chat_eh_grupo,
-        obter_mensagem_id, obter_texto_mensagem, mensagem_eh_recebida,
+        enviar_mensagem, chat_eh_grupo, obter_mensagens_recebidas,
         obter_contexto_conversa,
     )
+
+Selectors follow the WhatsApp Web DOM as of October 2026: the chat list is
+``#pane-side``, the open chat is ``#main`` (name in
+``[data-testid="conversation-info-header-chat-title-name"]``) and each message
+is a ``[data-id]`` row whose direction is inferred by ``_JS_LINHAS``. WhatsApp
+Web changes this markup without notice; when the scanner stops seeing
+messages, these selectors are the first thing to check.
 """
 
 import asyncio
-import re
+import time
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+
+USER_AGENT_CHROME = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                     "Chrome/156.0.0.0 Safari/537.36")
 
 # ---------------------------------------------------------------------------
 # Browser handling
@@ -39,7 +48,12 @@ async def abrir_navegador(playwright, headless: Optional[bool] = None,
         headless = HEADLESS
     perfil = Path(perfil_dir or PERFIL_DIR)
     perfil.mkdir(parents=True, exist_ok=True)
-    context = await playwright.chromium.launch_persistent_context(str(perfil), headless=headless)
+    opcoes = {}
+    if headless:
+        # WhatsApp Web does not load the chat list for a "HeadlessChrome" user agent.
+        opcoes["user_agent"] = USER_AGENT_CHROME
+        opcoes["viewport"] = {"width": 1400, "height": 900}
+    context = await playwright.chromium.launch_persistent_context(str(perfil), headless=headless, **opcoes)
     return context
 
 
@@ -47,123 +61,131 @@ async def fechar_navegador(browser: Union[Browser, BrowserContext]) -> None:
     """Close the Playwright browser/context."""
     await browser.close()
 
+# Shared JS: classifies the message rows of ``#main``. In the current DOM each
+# message is a ``[data-id]`` row (``data-testid="conv-msg-<id>"``) with no
+# in/out class. A row is incoming when its ``data-pre-plain-text`` sender, its
+# first aria label ("<name>:") or its tail icon (``tail-in``) points to the open
+# chat; outgoing rows carry a delivery status label ("Enviada", "Entregue",
+# "Lida"), "Você:" or ``tail-out``. Text inside quoted messages is ignored.
+_JS_LINHAS = """
+const STATUS = /^(enviada|entregue|lida|reproduzida|pendente|sent|delivered|read|played|pending)$/i;
+const nomeChat = () => {
+  const t = document.querySelector('#main [data-testid="conversation-info-header-chat-title-name"]')
+    || document.querySelector('#main header span[title]');
+  return t ? (t.getAttribute('title') || t.innerText || '').trim() : '';
+};
+const linhas = () => {
+  const main = document.querySelector('#main');
+  if (!main) return [];
+  const nome = nomeChat();
+  return [...main.querySelectorAll('[data-id]')].filter(row => !row.parentElement.closest('[data-id]')).map(row => {
+    const pre = row.querySelector('[data-pre-plain-text]')?.getAttribute('data-pre-plain-text') || '';
+    const remetente = (pre.match(/\\]\\s*(.*?):\\s*$/) || [, ''])[1].trim();
+    const rotulos = [...row.querySelectorAll('[aria-label]')].map(e => (e.getAttribute('aria-label') || '').trim());
+    const icone = n => !!row.querySelector(`[data-icon="${n}"]`);
+    const saida = rotulos.some(r => STATUS.test(r) || r === 'Você:' || r === 'You:') || icone('tail-out');
+    const entrada = !saida && (remetente === nome || rotulos.includes(nome + ':') || icone('tail-in'));
+    const texto = [...row.querySelectorAll('.selectable-text')]
+      .filter(el => !el.closest('[data-testid="quoted-message"]'))
+      .map(el => el.innerText).join('\\n').trim();
+    const midia = !!row.querySelector('audio, video, img[src^="blob:"], [data-icon="ptt-status"], [data-icon="ptt-play"], '
+      + '[data-icon="audio-play"], [data-icon="media-play"], [data-icon="document"], [data-testid="ptt-status"]');
+    const status = rotulos.filter(r => STATUS.test(r)).map(r => r.toLowerCase());
+    return {id: row.getAttribute('data-id'), entrada, saida, texto, midia, status};
+  });
+};
+"""
+
 # ---------------------------------------------------------------------------
 # Chat navigation helpers
 # ---------------------------------------------------------------------------
-async def abrir_chat_por_nome(page: Page, chat_nome: str) -> bool:
-    """Search for a chat by its visible name and click it.
-
-    Returns ``True`` if the chat was opened successfully.
-    """
-    await page.wait_for_selector("#pane-side", timeout=30000)
-    await page.fill("input[title='Search input']", chat_nome)
-    await page.keyboard.press("Enter")
-    try:
-        await page.wait_for_selector(f"text={chat_nome}", timeout=5000)
-        return True
-    except Exception:
-        return False
-
-
-async def fechar_chat_ativo(page: Page) -> None:
-    """Return to the main chat list (WhatsApp’s "home" screen)."""
-    try:
-        await page.click("button[data-testid='chat-back']")
-    except Exception:
-        await page.click("button[aria-label='Back']")
-    await page.wait_for_selector("#pane-side", timeout=10000)
+_JS_NOME_CHAT_ATIVO = """() => {
+  const main = document.querySelector('#main');
+  if (!main) return null;
+  const titulo = main.querySelector('[data-testid="conversation-info-header-chat-title-name"]')
+    || main.querySelector('header span[title]');
+  if (!titulo) return null;
+  return (titulo.getAttribute('title') || titulo.innerText || '').trim() || null;
+}"""
 
 
 async def obter_nome_chat_ativo(page: Page) -> Optional[str]:
-    """Return the currently opened chat’s name, or ``None`` if none is open.
-    Tries multiple selectors to be robust against UI changes.
+    """Return the name of the chat open in ``#main``, or ``None`` if none is open."""
+    return await page.evaluate(_JS_NOME_CHAT_ATIVO)
+
+
+async def abrir_chat_por_nome(page: Page, chat_nome: str) -> bool:
+    """Open the chat whose title is exactly ``chat_nome``.
+
+    The chat must be visible in the side list (``#pane-side``): the search box
+    is not used, so a partial match can never open the wrong chat. Returns
+    ``True`` only when ``#main`` shows that chat.
     """
-    selectors = [
-        "header span[data-testid='chat-name']",
-        "header span[title]",
-        "div[data-testid='conversation-info-header'] span[title]",
-    ]
-    for sel in selectors:
-        try:
-            name = await page.inner_text(sel)
-            if name:
-                return name
-        except Exception:
-            continue
-    return None
+    if await obter_nome_chat_ativo(page) == chat_nome:
+        return True
+    candidatos = page.locator("#pane-side").get_by_title(chat_nome, exact=True)
+    if await candidatos.count() != 1:
+        return False
+    await candidatos.click(timeout=3000)
+    for _ in range(20):
+        if await obter_nome_chat_ativo(page) == chat_nome:
+            # The header may switch before the message list finishes loading.
+            await asyncio.sleep(0.5)
+            return await obter_nome_chat_ativo(page) == chat_nome
+        await asyncio.sleep(0.1)
+    return False
+
+
+async def fechar_chat_ativo(page: Page) -> None:
+    """Close the open chat (Escape), returning to the chat list."""
+    if await obter_nome_chat_ativo(page) is not None:
+        await page.keyboard.press("Escape")
+
+
+async def chat_eh_grupo(page: Page) -> bool:
+    """Detect whether the open chat is a group or community."""
+    seletor = ('#main header [data-icon="default-group"], #main header [data-icon="community"], '
+               '#main header [title*="participantes"], #main header [title*="participants"]')
+    return await page.locator(seletor).count() > 0
 
 # ---------------------------------------------------------------------------
 # Message handling helpers
 # ---------------------------------------------------------------------------
-async def enviar_mensagem(page: Page, texto: str) -> None:
-    """Type and send a message to the currently opened chat."""
-    await page.fill("div[data-testid='conversation-compose-box-input']", texto)
-    await page.keyboard.press("Enter")
-    await asyncio.sleep(0.5)
+_JS_ENVIO_CONFIRMADO = "({antes, texto}) => {" + _JS_LINHAS + """
+  const norm = t => t.replace(/\\s+/g, ' ').trim();
+  return linhas().some(l => l.saida && !antes.includes(l.id) && norm(l.texto) === norm(texto)
+    && l.status.some(st => !['pendente', 'pending'].includes(st)));
+}"""
 
-# ---------------------------------------------------------------------------
-# Misc utilities used by scanner/dispatcher
-# ---------------------------------------------------------------------------
-async def encontrar_chats_nao_lidos(page: Page) -> List[Dict[str, object]]:
-    """Return a list of chats that have an unread badge.
 
-    Each entry is a dict ``{"nome": <str>, "elemento": <PlaywrightElement>}`` where
-    ``elemento`` can be clicked to open the chat.
+async def enviar_mensagem(page: Page, texto: str, chat_nome: Optional[str] = None,
+                          timeout_confirmacao: float = 15) -> None:
+    """Send ``texto`` in the open chat and wait until it shows the sent check.
+
+    Raises ``RuntimeError`` when the chat changes, the editor has a draft, or
+    the message is not confirmed in the interface within the timeout. The
+    caller must not resend after an error: the message may have gone out.
     """
-    unread_spans = await page.query_selector_all(
-        "div[data-testid='cell-frame-container'] span[data-testid='conversation-unread-count']"
-    )
-    resultados: List[Dict[str, object]] = []
-    for span in unread_spans:
-        container = await span.evaluate_handle(
-            "node => node.closest('div[data-testid=\\\"cell-frame-container\\\']')"
-        )
-        title_elem = await container.query_selector("span[title]")
-        nome = await title_elem.get_attribute("title") if title_elem else None
-        if nome:
-            resultados.append({"nome": nome, "elemento": container})
-    return resultados
+    if chat_nome is not None and await obter_nome_chat_ativo(page) != chat_nome:
+        raise RuntimeError("chat_diferente")
+    main = page.locator("#main")
+    editor = main.locator('footer div[contenteditable="true"][role="textbox"]')
+    if await editor.count() != 1 or (await editor.inner_text()).strip():
+        raise RuntimeError("editor_indisponivel_ou_com_rascunho")
+    antes = await main.locator("[data-id]").evaluate_all("els => els.map(el => el.getAttribute('data-id'))")
+    await editor.fill(texto)
+    if chat_nome is not None and await obter_nome_chat_ativo(page) != chat_nome:
+        raise RuntimeError("chat_mudou")
+    await editor.press("Enter")
+    limite = time.monotonic() + timeout_confirmacao
+    while time.monotonic() < limite:
+        if await page.evaluate(_JS_ENVIO_CONFIRMADO, {"antes": antes, "texto": texto}):
+            return
+        await asyncio.sleep(0.4)
+    raise RuntimeError("envio_nao_confirmado")
 
-
-async def chat_eh_grupo(page: Page) -> bool:
-    """Detect whether the currently opened chat is a group chat."""
-    try:
-        await page.wait_for_selector("button[data-testid='group-info']", timeout=2000)
-        return True
-    except Exception:
-        return False
-
-# ---------------------------------------------------------------------------
-# Message element helpers (used by scanner)
-# ---------------------------------------------------------------------------
-async def obter_mensagem_id(elem) -> Optional[str]:
-    """Return the unique message id from a message element, if present."""
-    return await elem.get_attribute("data-id")
-
-
-async def obter_texto_mensagem(elem) -> str:
-    """Return the visible text of a message element."""
-    return await elem.inner_text()
-
-
-async def mensagem_eh_recebida(elem) -> bool:
-    """Return ``True`` if the message was received (incoming), ``False`` otherwise."""
-    direction = await elem.get_attribute("data-direction")
-    return direction == "incoming"
-
-_JS_MENSAGENS_RECEBIDAS = """() => {
-  const main = document.querySelector('#main');
-  if (!main) return [];
-  return [...main.querySelectorAll('.message-in')].map(row => {
-    const id = row.getAttribute('data-id')
-      || row.closest('[data-id]')?.getAttribute('data-id')
-      || row.querySelector('[data-id]')?.getAttribute('data-id');
-    const body = row.querySelector('[data-pre-plain-text]') || row;
-    const texto = [...body.querySelectorAll('.selectable-text')].map(el => el.innerText).join('\\n').trim();
-    const midia = !!row.querySelector('audio, video, [data-icon="ptt-play"], [data-icon="audio-play"], '
-      + '[data-testid="audio-play"], [data-icon="document"], img[src^="blob:"]');
-    return {id, texto, midia};
-  }).filter(item => item.id);
+_JS_MENSAGENS_RECEBIDAS = "() => {" + _JS_LINHAS + """
+  return linhas().filter(l => l.entrada).map(l => ({id: l.id, texto: l.texto, midia: l.midia}));
 }"""
 
 
@@ -172,29 +194,20 @@ async def obter_mensagens_recebidas(page: Page) -> List[Dict[str, object]]:
 
     Each item is ``{"id": <data-id>, "texto": <str>, "midia": <bool>}``.
     Media without caption (audio, image, sticker, document) has ``texto == ""``.
-    Selectors adapted from ``bot-test/botfinal.py`` (``snapshot``).
+    Rows are classified by ``_JS_LINHAS``.
     """
     return await page.evaluate(_JS_MENSAGENS_RECEBIDAS) or []
 
 # ---------------------------------------------------------------------------
 # Conversation context helper
 # ---------------------------------------------------------------------------
+_JS_CONTEXTO = "(limite) => {" + _JS_LINHAS + """
+  return linhas().filter(l => l.texto && (l.entrada || l.saida))
+    .map(l => ({role: l.entrada ? 'user' : 'assistant', content: l.texto})).slice(-limite);
+}"""
+
+
 async def obter_contexto_conversa(page: Page, limite: int = 15) -> List[Dict[str, str]]:
-    """Collect the most recent *limite* messages from the currently opened chat.
-
-    Returns a list of dicts compatible with the Groq prompt format, e.g.
-    ``{"role": "user", "content": "message text"}``. The messages are ordered
-    chronologically (oldest first).
-    """
-    elements = await page.query_selector_all("[data-pre-plain-text]")
-    if not elements:
-        return []
-    selected = elements[-limite:]
-    contexto: List[Dict[str, str]] = []
-    for elem in selected:
-        role = "user" if await mensagem_eh_recebida(elem) else "assistant"
-        raw = (await elem.inner_text()).strip()
-        cleaned = re.sub(r"^\d{1,2}:\d{2}\s+", "", raw)
-        contexto.append({"role": role, "content": cleaned})
-    return contexto
-
+    """Return the last ``limite`` text messages of the open chat, oldest first,
+    as ``{"role": "user" | "assistant", "content": <text>}``."""
+    return await page.evaluate(_JS_CONTEXTO, limite) or []

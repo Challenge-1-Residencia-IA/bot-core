@@ -27,10 +27,8 @@ from .utils.playwright_utils import (
     abrir_chat_por_nome,
     obter_contexto_conversa,
     obter_mensagens_recebidas,
-    obter_nome_chat_ativo,
     fechar_chat_ativo,
     chat_eh_grupo,
-    encontrar_chats_nao_lidos,
 )
 from .config import MENSAGEM_INDISPONIVEL, MENSAGEM_MIDIA, TIMEOUT_JOB_S
 from .delivery_store import message_key
@@ -207,90 +205,60 @@ async def inicializar_baseline(page, lock, store, contatos, chats_inicializados:
     for nome in contatos:
         async with lock:
             try:
-                if not await abrir_chat_por_nome(page, nome) or await obter_nome_chat_ativo(page) != nome:
+                if not await abrir_chat_por_nome(page, nome):
                     logging.warning("⚠️ [Scanner] Não abri '%s' no início; baseline fica para a primeira abertura", nome)
                     continue
                 marcadas = marcar_baseline(store, nome, await obter_mensagens_recebidas(page))
                 chats_inicializados.add(nome)
                 logging.info("📌 [Scanner] Histórico inicial de '%s' ignorado (%d mensagens)", nome, marcadas)
-                await fechar_chat_ativo(page)
             except Exception as erro:
-                logging.warning("⚠️ [Scanner] Baseline de '%s' adiada (%s)", nome, type(erro).__name__)
+                logging.warning("⚠️ [Scanner] Baseline de '%s' adiada (%s: %s)", nome, type(erro).__name__, erro)
 
 
 async def scanner_loop(page, arq_pool, lock, config, fila_respostas: asyncio.Queue, store):
-    """Continuously scans for unread chats and enqueues them as ARQ jobs.
-    The loop respects the ``pause_event`` so the user can pause/resume
-    the bot by pressing ``p`` + ``Enter`` in the console.
+    """Poll the allowed contacts in turn and enqueue their new messages as ARQ jobs.
+
+    Only chats in ``contatos_permitidos`` are opened (fail-closed allowlist); the
+    unread badges are not used, because their markup and text change between
+    WhatsApp Web versions and languages. The loop respects ``pause_event``
+    (``p`` + ``Enter`` in the console).
     """
-    logging.info("👀 [Scanner] Monitor de mensagens ativado (varrendo lista lateral + chat ativo)…")
+    contatos = list(dict.fromkeys(config["contatos_permitidos"]))
+    logging.info("👀 [Scanner] Monitor ativado para %d contato(s) permitido(s)", len(contatos))
     ultimo_pulso = time.time()
-    permitidos = set(config["contatos_permitidos"])
     chats_ignorados = set()
     chats_inicializados = set()
+    avisados = set()
 
-    await inicializar_baseline(page, lock, store, config["contatos_permitidos"], chats_inicializados)
+    await inicializar_baseline(page, lock, store, contatos, chats_inicializados)
 
     while True:
         try:
-            # --------------------------------------------------------------
-            # Pause handling – block until user resumes the bot
-            # --------------------------------------------------------------
             await _await_if_paused()
 
-            # Periodic heartbeat for visibility
             if time.time() - ultimo_pulso > 15:
                 logging.info("💓 [Scanner] Em espera... Nenhuma mensagem nova no momento.")
                 ultimo_pulso = time.time()
 
-            # 1️⃣ Find unread chats in the sidebar
-            async with lock:
-                chats_nao_lidos = await encontrar_chats_nao_lidos(page)  # helper from utils
-
-            # 2️⃣ Process each unread chat
-            if chats_nao_lidos:
-                for chat_info in chats_nao_lidos:
-                    nome = chat_info["nome"]
-                    if nome in chats_ignorados:
-                        continue
-                    if nome not in permitidos:
-                        # Not even opened: unknown contacts are never read
-                        logging.info("🚫 [Scanner] Chat fora de contatos_permitidos ignorado")
-                        chats_ignorados.add(nome)
-                        continue
-
-                    async with lock:
-                        try:
-                            await chat_info["elemento"].click()
-                            await asyncio.sleep(0.4)
-                        except Exception:
-                            continue
-
-                        # Ignore groups if configured
-                        if config["ignorar_grupos"] and await chat_eh_grupo(page):
-                            logging.info(f"👥 [Scanner] Grupo ignorado: '{nome}'")
-                            chats_ignorados.add(nome)
-                            # Return to the main chat list to avoid staying inside the group
-                            # (the lock is already held here; asyncio.Lock is not reentrant)
-                            await fechar_chat_ativo(page)
-                            continue
-
-                        await processar_chat_aberto(
-                            page, nome, arq_pool, fila_respostas, store, config, chats_inicializados
-                        )
-            else:
-                # 3️⃣ No unread badges – monitor the currently opened chat
+            for nome in contatos:
+                if nome in chats_ignorados:
+                    continue
                 async with lock:
-                    nome_ativo = await obter_nome_chat_ativo(page)
-                    if nome_ativo and nome_ativo in permitidos and nome_ativo not in chats_ignorados:
-                        if config["ignorar_grupos"] and await chat_eh_grupo(page):
-                            chats_ignorados.add(nome_ativo)
-                            logging.info(f"👥 [Scanner] Chat ativo é grupo ignorado: '{nome_ativo}'")
-                            await fechar_chat_ativo(page)
-                            continue
-                        await processar_chat_aberto(
-                            page, nome_ativo, arq_pool, fila_respostas, store, config, chats_inicializados
-                        )
+                    if not await abrir_chat_por_nome(page, nome):
+                        if nome not in avisados:
+                            logging.warning("⚠️ [Scanner] '%s' não está visível na lista de conversas; "
+                                            "abra a conversa uma vez ou envie uma mensagem para ela aparecer", nome)
+                            avisados.add(nome)
+                        continue
+                    avisados.discard(nome)
+                    if config["ignorar_grupos"] and await chat_eh_grupo(page):
+                        logging.info(f"👥 [Scanner] Grupo ignorado: '{nome}'")
+                        chats_ignorados.add(nome)
+                        await fechar_chat_ativo(page)
+                        continue
+                    await processar_chat_aberto(
+                        page, nome, arq_pool, fila_respostas, store, config, chats_inicializados
+                    )
             await asyncio.sleep(config["intervalo_scanner"])
         except asyncio.CancelledError:
             break
