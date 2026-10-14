@@ -1,0 +1,18 @@
+mode_dry_run: true
+intervalo_scanner: 1.0
+num_workers_ia: 5
+limite_contexto: 15
+ignorar_grupos: true
+
+debug_mode: true
+debug_log_path: debug.log
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  db: 0
+
+groq:
+  api_key: ${GROQ_API_KEY}
+  modelo_principal: qwen/qwen3.8-27b
+  modelo_fallback: openai/gpt-oss-120b

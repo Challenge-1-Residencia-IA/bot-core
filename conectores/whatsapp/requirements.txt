@@ -1,0 +1,2 @@
+arq[redis]>=0.24
+pyyaml
