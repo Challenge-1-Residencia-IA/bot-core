@@ -22,6 +22,14 @@ WhatsApp Web ──► scanner ──enqueue_job("analisar_mensagem", fila "bot-
 - Se o núcleo não responde dentro de `timeout_job_s`, ou o job falha, o dispatcher recebe a mensagem curta `mensagem_indisponivel`.
 - `chat_id` enviado ao núcleo é o **nome do chat** exibido no WhatsApp Web (o DOM não expõe um id estável da conversa).
 
+## Como o WhatsApp Web é lido
+
+- O scanner **consulta em ciclo os contatos permitidos**: abre cada conversa pelo **nome exato** na lista lateral (`#pane-side`) e lê as mensagens novas. Não usa os selos de "não lida" nem a caixa de busca, cujo formato muda entre versões e idiomas. A conversa precisa estar visível na lista lateral; se não estiver, o log avisa.
+- O nome do chat aberto vem de `[data-testid="conversation-info-header-chat-title-name"]`. Cada mensagem é uma linha `[data-id]`; a direção é inferida pelo remetente em `data-pre-plain-text`, pelos rótulos ("Nome:", "Você:"), pelo status de entrega ("Enviada", "Entregue", "Lida") e pelos ícones `tail-in`/`tail-out`. Texto de mensagens citadas é ignorado.
+- O envio só conta como feito quando a mensagem aparece no chat com status de entrega; caso contrário, vira `uncertain` e não é reenviada.
+- Em modo headless, o navegador se identifica como um Chrome comum: com o user agent "HeadlessChrome", o WhatsApp Web não carrega a lista de conversas.
+- Os seletores ficam em `src/utils/playwright_utils.py` e refletem o WhatsApp Web de outubro de 2026. Quando o scanner deixar de ver mensagens, comece por eles.
+
 ## Proteções
 
 Adaptadas da integração RAG–WhatsApp do `experimentos` (`bot-test/botfinal.py` e `delivery_store.py`):
