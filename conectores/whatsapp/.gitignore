@@ -1,0 +1,27 @@
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# WhatsApp session profile (contains session tokens & cookies)
+whatsapp_profile/
+
+# Environment variables & secrets
+.env
+
+# Logs & temp
+*.log
+.DS_Store
+Thumbs.db
+# Registro de entregas e bancos locais do conector
+data/
+*.db
+*.db-wal
+*.db-shm
+*.db.lock

@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-*/
 venv/
 
 # Variáveis de ambiente
@@ -24,3 +25,9 @@ datasets/
 .DS_Store
 .vscode/
 .idea/
+
+# Bancos SQLite locais do conector
+*.db
+
+# Sessão do WhatsApp Web (tokens e cookies)
+whatsapp_profile/

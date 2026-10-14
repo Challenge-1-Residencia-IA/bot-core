@@ -1,0 +1,24 @@
+mode_dry_run: true          # true = só registra a resposta no log, não envia no WhatsApp
+headless: false             # true = Chromium sem janela (só depois do primeiro login com QR)
+perfil_navegador: whatsapp_profile      # perfil persistente do Chromium (sessão do WhatsApp; fora do git)
+registro_entregas: data/deliveries.db   # registro de entregas (só hashes e estados; fora do git)
+
+# Nomes exatos dos chats atendidos. Lista vazia = ninguém é atendido (fail-closed).
+# Sobrescrito por WHATSAPP_CONTATOS_PERMITIDOS='["Nome 1", "Nome 2"]'.
+contatos_permitidos: []
+
+intervalo_scanner: 1.0
+limite_contexto: 15
+ignorar_grupos: true
+timeout_job_s: 300          # espera máxima pelo resultado do núcleo (job analisar_mensagem)
+limite_resposta_chars: 12000            # respostas maiores são descartadas (estado blocked)
+mensagem_indisponivel: "No momento não consegui analisar sua mensagem. Tente novamente em alguns minutos."
+mensagem_midia: "No momento analiso apenas mensagens de texto. Envie a informação por escrito ou o link da notícia."
+
+debug_mode: true
+debug_log_path: debug.log
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  db: 0

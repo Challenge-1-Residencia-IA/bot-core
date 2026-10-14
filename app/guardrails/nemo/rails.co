@@ -1,0 +1,12 @@
+define bot informar recusa
+  "$texto_recusa"
+
+define bot refuse to respond
+  "Isso está fora do que eu faço. Eu só ajudo a verificar informações, como notícias, mensagens encaminhadas, alegações e links. Envie a mensagem, alegação ou link que você recebeu e quer verificar."
+
+define flow verificacao deterministica
+  $decisao = execute verificar_entrada_deterministica
+  if not $decisao.permitida
+    $texto_recusa = $decisao.texto
+    bot informar recusa
+    stop
