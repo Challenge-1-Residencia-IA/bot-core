@@ -1,8 +1,10 @@
 # src/models.py
 """Common data structures shared across the bot.
 
-`MensagemTarefa` – the task placed on the ARQ queue by the scanner.
-`RespostaTarefa` – the result placed on the in‑memory RESULT_QUEUE by the worker.
+`MensagemTarefa` – the message read by the scanner (converted to
+``app.contrato.PedidoAnalise`` before being enqueued for the core).
+`RespostaTarefa` – the reply placed on the in‑memory response queue by the
+scanner (after the core's ARQ job finishes) and consumed by the dispatcher.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from typing import List, Dict, Optional
 
 @dataclass
 class MensagemTarefa:
-    """Data sent from the scanner to the ARQ worker.
+    """Message read by the scanner.
 
     Attributes
     ----------
@@ -38,7 +40,7 @@ class MensagemTarefa:
 
 @dataclass
 class RespostaTarefa:
-    """Result returned by the ARQ worker and consumed by the dispatcher.
+    """Reply consumed by the dispatcher.
 
     Attributes
     ----------
@@ -47,9 +49,17 @@ class RespostaTarefa:
     mensagem_id: str
         The original message id (so the dispatcher can match the reply).
     resposta_texto: str
-        The generated reply text from the LLM.
+        The reply text to send (from ``ResultadoAnalise.resposta_texto``).
+    falha: bool
+        True when the core did not answer (timeout/error) and ``resposta_texto``
+        is the short unavailability message.
+    chave: str
+        Delivery journal key (``delivery_store.message_key``); empty when the
+        reply is not tracked.
     """
 
     chat_nome: str
     mensagem_id: str
     resposta_texto: str
+    falha: bool = False
+    chave: str = ""

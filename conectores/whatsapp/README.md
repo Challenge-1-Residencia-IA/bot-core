@@ -1,120 +1,112 @@
-# WhatsApp AI Bot (Playwright + Groq)
+# Conector de WhatsApp (Playwright)
 
-## 📖 Visão Geral
+Conector do bot-core para o WhatsApp Web. Ele lê as mensagens com o **Playwright**, envia cada uma ao **núcleo** pela fila **ARQ** (Redis) e responde no chat com o texto que o núcleo devolve. O conector não chama LLM: a análise (guardrails, busca, LangGraph) fica toda no núcleo (`app/`).
 
-Este repositório contém um **bot autônomo** para o WhatsApp Web, desenvolvido em Python usando **Playwright** para a automação do navegador e a API **Groq** (modelos `qwen/qwen3.8-27b` com fallback para `openai/gpt-oss-120b`) para geração de respostas em linguagem natural.
+Origem: repositório `bot-test` (branch `teste1`), importado com `git subtree`.
 
-O objetivo principal é **monitorar conversas**, identificar mensagens não lidas e responder de forma inteligente, focado em combater desinformação (fake news). O bot pode operar em modo de simulação (**dry‑run**) para testes seguros, ou em modo de produção enviando respostas diretamente no WhatsApp.
-
----
-
-## 🛠️ Funcionalidades Principais
-
-- **Detecção de chats não lidos** – varre a lista lateral (`#pane-side`) e identifica conversas com mensagens pendentes.
-- **Troca automática de chat** – abre o chat correspondente e coleta o contexto da conversa.
-- **Contextualização** – mantém um histórico limitado das últimas *N* mensagens para fornecer contexto ao modelo de IA.
-- **Integração Groq** – gera respostas usando modelos avançados, com fallback automático em caso de falha.
-- **Modo Simulação (Dry‑Run)** – registra no terminal a mensagem recebida e a resposta gerada, sem enviar ao contato.
-- **Persistência SQLite** – armazena mensagens recebidas e respostas enviadas localmente.
-- **Escalabilidade** – suporte a múltiplos workers de IA (paralelismo assíncrono) e fila de tarefas.
-- **Compatibilidade Windows** – código preparado para UTF‑8 no console e uso de PowerShell.
-
----
-
-## 📁 Estrutura do Projeto
+## Fluxo
 
 ```
-bot-test/
-├─ .env               # Variáveis de ambiente (GROQ_API_KEY)
-├─ .env.example       # Exemplo de .env
-├─ botfinal.py        # Entrypoint – orquestra scanner, workers e dispatcher
-├─ database.py        # SQLite helper (init, save_message)
-├─ test_database.py   # Testes unitários para camada de persistência
-├─ inspecionar.py     # Ferramentas auxiliares de inspeção (debug)
-├─ requirements.txt   # Dependências Python
-└─ README.md          # Este documento
+WhatsApp Web ──► scanner ──enqueue_job("analisar_mensagem", fila "bot-core:analises")──► Redis
+                    │                                                                    │
+                    │ await job.result(timeout)  (uma asyncio.Task por mensagem)          ▼
+                    │◄──────────────────────── ResultadoAnalise ◄──────── worker do núcleo (app.worker)
+                    ▼
+        fila em memória (asyncio.Queue, mesmo processo)
+                    ▼
+               dispatcher ──► envia no chat (ou só registra no log, em dry-run)
 ```
 
----
+- O contrato (nome do job, fila, `PedidoAnalise`, `ResultadoAnalise`, timeout padrão) está em `app/contrato.py`, importado pelos dois lados.
+- O `_job_id` do ARQ é `whatsapp:<id da mensagem>`: a mesma mensagem não é enfileirada duas vezes (chave de idempotência).
+- Se o núcleo não responde dentro de `timeout_job_s`, ou o job falha, o dispatcher recebe a mensagem curta `mensagem_indisponivel`.
+- `chat_id` enviado ao núcleo é o **nome do chat** exibido no WhatsApp Web (o DOM não expõe um id estável da conversa).
 
-## 🔧 Pré‑requisitos
+## Proteções
 
-- **Python 3.10+**
-- **PowerShell** (para scripts de ativação do virtualenv)
-- Conta Groq com chave de API válida
-- Conexão estável com a internet (para chamadas ao modelo)
+Adaptadas da integração RAG–WhatsApp do `experimentos` (`bot-test/botfinal.py` e `delivery_store.py`):
 
----
+- **Allowlist fail-closed:** só os chats em `contatos_permitidos`, com o nome exato, são abertos e analisados. Se a lista estiver vazia, nenhum contato é atendido, e um aviso aparece no log ao iniciar. Fora do dry-run, o dispatcher confere a lista de novo antes de enviar.
+- **Histórico inicial (baseline):** ao iniciar, o conector abre cada contato permitido e marca as mensagens já visíveis como `baseline`, sem analisá-las. O contato que não abre nesse momento recebe o baseline na primeira abertura.
+- **Registro de entregas** (`src/delivery_store.py`, SQLite em `data/deliveries.db`):
+  - A chave é `sha256(chat + "\0" + mensagem_id)`. O registro não guarda texto nem nome.
+  - O scanner só enfileira se o `claim` der certo. O dispatcher só envia depois de `reserve_send` (`ready` → `sending`).
+  - Se o envio falha, a mensagem vira `uncertain` e não é reenviada automaticamente.
+  - Chat que não abre, contato fora da lista e resposta acima de `limite_resposta_chars` viram `blocked`.
+  - Ao reiniciar, os estados intermediários (`queued`, `analyzing`, `ready`, `sending`) viram `interrupted` e não são reenviados.
+  - Um lock de arquivo (`deliveries.db.lock`) impede duas instâncias no mesmo registro.
+- **Mídia sem texto** (áudio, imagem, figurinha, documento): o próprio conector responde com `mensagem_midia`, pedindo o texto ou o link, sem chamar o núcleo. Uma imagem com legenda vai para o núcleo com a legenda.
+- **Perfil persistente do navegador** (`launch_persistent_context` em `whatsapp_profile/`): o QR code só é pedido no primeiro login. Depois disso, o `headless` funciona. O perfil guarda a sessão do WhatsApp e não pode ir para o git.
 
-## 🚀 Instalação e Configuração
+Estados do registro: `baseline`, `queued`, `analyzing`, `ready`, `sending`, `sent`, `dry_run`, `blocked`, `uncertain`, `interrupted`.
 
-1. **Clonar o repositório**
-   ```powershell
-   git clone <repo-url>
-   cd bot-test
-   ```
+## Configuração
 
-2. **Criar e ativar o ambiente virtual** (opcional, porém recomendado)
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
+`config.yaml` (algumas chaves aceitam variável de ambiente, útil na VM/Docker):
 
-3. **Instalar dependências**
-   ```powershell
-   pip install -r requirements.txt
-   playwright install chromium   # instala o browser usado pelo Playwright
-   ```
+| Chave | Variável | Padrão | Efeito |
+|---|---|---|---|
+| `mode_dry_run` | `WHATSAPP_DRY_RUN` | `true` | Só registra a resposta no log, não envia |
+| `headless` | `WHATSAPP_HEADLESS` | `false` | Chromium sem janela (depois do primeiro login) |
+| `contatos_permitidos` | `WHATSAPP_CONTATOS_PERMITIDOS` (lista JSON) | `[]` | Chats atendidos; vazio = nenhum |
+| `perfil_navegador` | `WHATSAPP_PERFIL_DIR` | `whatsapp_profile` | Perfil persistente do Chromium |
+| `registro_entregas` | `WHATSAPP_REGISTRO_ENTREGAS` | `data/deliveries.db` | Registro de entregas |
+| `limite_resposta_chars` | — | `12000` | Respostas maiores são descartadas (`blocked`) |
+| `timeout_job_s` | — | `300` | Espera máxima pelo resultado do núcleo |
+| `mensagem_indisponivel` | — | texto curto | Resposta em caso de timeout/erro |
+| `mensagem_midia` | — | texto curto | Resposta a mensagem sem texto |
+| `redis.host/port/db` | `REDIS_HOST/PORT/DB` | `127.0.0.1:6379/0` | Redis compartilhado com o núcleo |
 
-4. **Configurar variáveis de ambiente**
-   ```powershell
-   cp .env.example .env
-   # Edite .env e insira sua chave Groq
-   notepad .env
-   ```
+Caminhos relativos são resolvidos a partir de `conectores/whatsapp/`. As variáveis de ambiente precisam estar exportadas no shell, porque o conector não lê o `.env` sozinho (veja `.env.example`).
 
----
+## Como rodar (a partir da raiz do `bot-core`)
 
-## 📐 Uso
+Todos os comandos rodam na raiz do `bot-core`, porque o conector importa `app.contrato` e é executado como módulo (`python -m conectores.whatsapp.src.main`, sem mexer em `sys.path`).
 
-```powershell
-python botfinal.py
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt -r conectores/whatsapp/requirements.txt
+playwright install chromium
+
+# 1. Redis
+docker compose -f conectores/whatsapp/docker-compose.yml up -d redis
+
+# 2. Núcleo (worker do ARQ), em outro terminal
+arq app.worker.WorkerSettings
+
+# 3. Conector, em outro terminal (no primeiro uso, escaneie o QR code na janela do Chromium)
+export WHATSAPP_CONTATOS_PERMITIDOS='["Nome exato do contato"]'
+python -m conectores.whatsapp.src.main
 ```
 
-- **Modo Simulação** (padrão) – defina `MODO_DRY_RUN = True` no início de `botfinal.py` para apenas **logar** as mensagens e respostas.
-- **Modo Produção** – altere para `MODO_DRY_RUN = False` para que o bot envie respostas reais via WhatsApp Web.
+No console do conector: `p` + Enter pausa/retoma; `d` + Enter liga/desliga o dry-run.
 
-> **Dica:** mantenha o console aberto e monitore os logs. O scanner exibe “pulse” a cada 15 s indicando que está ativo.
+Para enviar respostas de verdade: `WHATSAPP_DRY_RUN=false python -m conectores.whatsapp.src.main` (use o número dedicado do bot).
 
----
+## Testes
 
-## 🧪 Testes
-
-Execute os testes de banco de dados com:
-```powershell
-python -m unittest discover -s . -p "test_*.py"
+```bash
+python -m pytest conectores/whatsapp/tests
 ```
 
----
+Os testes usam fakes (pool ARQ, job e página) e um registro de entregas em diretório temporário. Eles não abrem navegador nem precisam de Redis.
 
-## 🤝 Contribuição
+## Estrutura
 
-1. Fork este repositório
-2. Crie uma branch para sua feature (`git checkout -b minha-feature`)
-3. Submeta um Pull Request explicando a mudança
-
----
-
-## 📄 Licença
-
-Distribuído sob a licença MIT. Consulte o arquivo `LICENSE` para mais detalhes.
-
----
-
-## 📞 Suporte / Troubleshooting
-
-- **Problemas de login no WhatsApp Web** – certifique‑se de que o QR‑code foi escaneado e que a sessão está ativa.
-- **Erros de taxa na Groq** – o código já inclui retries automáticos e fallback; caso persista, verifique seu plano de API.
-- **Mensagens não enviadas** – confirme se `MODO_DRY_RUN` está `False` e que o navegador não está bloqueando pop‑ups.
-
----
+```
+conectores/whatsapp/
+├─ config.yaml          # configuração (dry-run, headless, timeout, Redis)
+├─ docker-compose.yml   # Redis local
+├─ requirements.txt     # dependências só do conector
+├─ src/
+│  ├─ main.py           # entrypoint: navegador, pool ARQ, scanner, dispatcher
+│  ├─ scanner.py        # acha mensagens, enfileira no núcleo, espera o resultado
+│  ├─ dispatcher.py     # envia as respostas (ou registra, em dry-run)
+│  ├─ control.py        # pausa e dry-run pelo console
+│  ├─ delivery_store.py # registro de entregas (hashes e estados, sem texto)
+│  ├─ config.py, models.py, diagnostics.py
+│  └─ utils/playwright_utils.py
+├─ tests/               # testes com pytest
+└─ botfinal.py, database.py, inspecionar.py, run_bot.ps1, test_click.py,
+   test_database.py, ver_banco.py   # legado do bot-test (versão monolítica com Groq)
+```

@@ -1,2 +1,3 @@
-arq[redis]>=0.24
+arq
 pyyaml
+playwright

@@ -4,12 +4,18 @@
 The script performs the following steps:
 1. Loads configuration from ``config.yaml``.
 2. Starts a Playwright ``async_browser`` instance.
-3. Creates an ARQ pool pointing at the local Redis server.
+3. Creates an ARQ pool pointing at the Redis server shared with the core
+   (``bot-core`` worker: ``arq app.worker.WorkerSettings``).
 4. Launches three background tasks:
-   - ``scanner_loop`` – discovers unread chats and enqueues jobs.
-   - ``dispatcher_loop`` – consumes processed results and sends replies.
+   - ``scanner_loop`` – discovers unread chats, enqueues ``analisar_mensagem``
+     jobs for the core and awaits their results (one asyncio task per message).
+   - ``dispatcher_loop`` – consumes the replies and sends them.
    - ``monitor_pause_input`` – listens for ``p`` + Enter on the console to toggle pause/resume.
 5. Handles graceful shutdown on SIGINT/SIGTERM, cancelling all tasks and closing resources.
+
+Run from the ``bot-core`` root (so that ``app.contrato`` is importable)::
+
+    python -m conectores.whatsapp.src.main
 """
 import asyncio
 import logging
@@ -44,11 +50,13 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from playwright.async_api import async_playwright
 
-from src.config import CONFIG
-from src.control import monitor_pause_input
-from src.scanner import scanner_loop
-from src.dispatcher import dispatcher_loop
-from src.utils.playwright_utils import abrir_navegador, fechar_navegador
+from app.contrato import FILA
+from .config import CONFIG, PERFIL_DIR, REDIS_DB, REDIS_HOST, REDIS_PORT, REGISTRO_ENTREGAS_PATH
+from .delivery_store import DeliveryStore
+from .control import monitor_pause_input
+from .scanner import scanner_loop
+from .dispatcher import dispatcher_loop
+from .utils.playwright_utils import abrir_navegador, fechar_navegador
 
 # Global asyncio lock to serialize Playwright interactions
 lock = asyncio.Lock()
@@ -82,28 +90,57 @@ async def main():
     # Ensure config is loaded (the module ``src.config`` already does this).
     _ = CONFIG  # reference to avoid unused-import lint warnings
 
-    # Start Playwright browser
+    # Allowlist: fail-closed when empty
+    if not CONFIG["contatos_permitidos"]:
+        logging.warning(
+            "🚫 contatos_permitidos está vazio: o bot NÃO vai atender nenhum contato (fail-closed). "
+            "Configure config.yaml ou WHATSAPP_CONTATOS_PERMITIDOS."
+        )
+    else:
+        logging.info("✅ Contatos permitidos: %d", len(CONFIG["contatos_permitidos"]))
+
+    # Delivery journal (single instance lock; intermediate states -> interrupted)
+    try:
+        store = DeliveryStore(REGISTRO_ENTREGAS_PATH)
+    except RuntimeError as erro:
+        logging.error("⛔ %s (%s). Encerrando.", erro, REGISTRO_ENTREGAS_PATH)
+        sys.exit(1)
+    if store.interrompidas_no_inicio:
+        logging.warning("⚠️ %d entregas pendentes da execução anterior marcadas como interrupted (não serão reenviadas).",
+                        store.interrompidas_no_inicio)
+
+    # Start Playwright browser (persistent profile: QR code only on the first run)
     playwright = await async_playwright().start()
     browser = await abrir_navegador(playwright)
-    page = await browser.new_page()
+    logging.info("🗂️ Perfil do navegador: %s", PERFIL_DIR)
+    page = browser.pages[0] if browser.pages else await browser.new_page()
     await page.goto('https://web.whatsapp.com', wait_until='load')
     await wait_for_whatsapp_ui(page)
 
-    # Create ARQ pool (uses the Redis settings from config.yaml)
-    redis_cfg = CONFIG["redis"]
+    # Create ARQ pool (uses the Redis settings from config.yaml / env)
     arq_pool = await create_pool(
         RedisSettings(
-            host=redis_cfg["host"],
-            port=redis_cfg["port"],
-            database=redis_cfg["db"],
+            host=REDIS_HOST,
+            port=REDIS_PORT,
+            database=REDIS_DB,
         ),
-        # Workers are launched separately via ``python -m arq worker src.worker``
+        # The core's worker is launched separately: ``arq app.worker.WorkerSettings``
+        default_queue_name=FILA,
+    )
+
+    # In-memory queue (same process): scanner -> dispatcher
+    fila_respostas: asyncio.Queue = asyncio.Queue()
+
+    logging.info(
+        "⚙️ Modo simulação (dry-run): %s | headless: %s",
+        CONFIG["mode_dry_run"],
+        CONFIG["headless"],
     )
 
     # Create background tasks
     tasks = []
-    tasks.append(asyncio.create_task(scanner_loop(page, arq_pool, lock, CONFIG), name="scanner"))
-    tasks.append(asyncio.create_task(dispatcher_loop(page, lock), name="dispatcher"))
+    tasks.append(asyncio.create_task(scanner_loop(page, arq_pool, lock, CONFIG, fila_respostas, store), name="scanner"))
+    tasks.append(asyncio.create_task(dispatcher_loop(page, lock, fila_respostas, store), name="dispatcher"))
     tasks.append(asyncio.create_task(monitor_pause_input(), name="pause_listener"))
 
     # Signal handling – cancel all tasks on SIGINT/SIGTERM
@@ -132,6 +169,7 @@ async def main():
     await arq_pool.close()
     await fechar_navegador(browser)
     await playwright.stop()
+    store.close()
     logging.info("✅ Bot stopped.")
 
 # ---------------------------------------------------------------------------

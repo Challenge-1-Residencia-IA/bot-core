@@ -3,7 +3,7 @@
 
 All functions are deliberately small and async‑compatible with the bot code.
 They are imported as:
-    from src.utils.playwright_utils import (
+    from conectores.whatsapp.src.utils.playwright_utils import (
         abrir_navegador, fechar_navegador,
         abrir_chat_por_nome, fechar_chat_ativo, obter_nome_chat_ativo,
         enviar_mensagem, encontrar_chats_nao_lidos, chat_eh_grupo,
@@ -15,23 +15,35 @@ They are imported as:
 import asyncio
 import re
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 
-from playwright.async_api import Browser, Page, async_playwright
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 # ---------------------------------------------------------------------------
 # Browser handling
 # ---------------------------------------------------------------------------
-async def abrir_navegador(playwright) -> Browser:
-    """Launch a fresh Chromium browser (non‑persistent) for WhatsApp Web.
+async def abrir_navegador(playwright, headless: Optional[bool] = None,
+                          perfil_dir: Optional[Path] = None) -> BrowserContext:
+    """Launch Chromium with a persistent profile for WhatsApp Web.
 
-    Using a persistent profile can cause a lock error when a previous instance hasn't been cleaned up. This non‑persistent launch avoids the ProcessSingleton conflict. If you need to keep login state, use a unique profile directory.
+    The profile directory keeps the WhatsApp session, so the QR code is only
+    needed on the first run; after that ``headless`` mode works too. Only one
+    process may use a profile at a time (Chromium's ProcessSingleton lock).
+
+    ``headless`` and ``perfil_dir`` default to ``config.yaml`` (``headless``,
+    ``perfil_navegador``), overridable by ``WHATSAPP_HEADLESS`` and
+    ``WHATSAPP_PERFIL_DIR``.
     """
-    browser = await playwright.chromium.launch(headless=False)
-    return browser
+    from ..config import HEADLESS, PERFIL_DIR
+    if headless is None:
+        headless = HEADLESS
+    perfil = Path(perfil_dir or PERFIL_DIR)
+    perfil.mkdir(parents=True, exist_ok=True)
+    context = await playwright.chromium.launch_persistent_context(str(perfil), headless=headless)
+    return context
 
 
-async def fechar_navegador(browser: Browser) -> None:
+async def fechar_navegador(browser: Union[Browser, BrowserContext]) -> None:
     """Close the Playwright browser/context."""
     await browser.close()
 
@@ -138,6 +150,31 @@ async def mensagem_eh_recebida(elem) -> bool:
     """Return ``True`` if the message was received (incoming), ``False`` otherwise."""
     direction = await elem.get_attribute("data-direction")
     return direction == "incoming"
+
+_JS_MENSAGENS_RECEBIDAS = """() => {
+  const main = document.querySelector('#main');
+  if (!main) return [];
+  return [...main.querySelectorAll('.message-in')].map(row => {
+    const id = row.getAttribute('data-id')
+      || row.closest('[data-id]')?.getAttribute('data-id')
+      || row.querySelector('[data-id]')?.getAttribute('data-id');
+    const body = row.querySelector('[data-pre-plain-text]') || row;
+    const texto = [...body.querySelectorAll('.selectable-text')].map(el => el.innerText).join('\\n').trim();
+    const midia = !!row.querySelector('audio, video, [data-icon="ptt-play"], [data-icon="audio-play"], '
+      + '[data-testid="audio-play"], [data-icon="document"], img[src^="blob:"]');
+    return {id, texto, midia};
+  }).filter(item => item.id);
+}"""
+
+
+async def obter_mensagens_recebidas(page: Page) -> List[Dict[str, object]]:
+    """Return the incoming messages visible in the open chat, oldest first.
+
+    Each item is ``{"id": <data-id>, "texto": <str>, "midia": <bool>}``.
+    Media without caption (audio, image, sticker, document) has ``texto == ""``.
+    Selectors adapted from ``bot-test/botfinal.py`` (``snapshot``).
+    """
+    return await page.evaluate(_JS_MENSAGENS_RECEBIDAS) or []
 
 # ---------------------------------------------------------------------------
 # Conversation context helper

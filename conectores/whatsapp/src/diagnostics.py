@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 # Import config flags – they are loaded when this module is imported.
-from src.config import DEBUG_MODE, DEBUG_LOG_PATH
+from .config import DEBUG_MODE, DEBUG_LOG_PATH
 
 # Set up a dedicated logger for diagnostics.
 _diag_logger = logging.getLogger("diagnostics")

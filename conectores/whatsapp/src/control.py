@@ -38,6 +38,6 @@ async def monitor_pause_input():
             _toggle_pause()
         elif cmd == "d":
             # Toggle dry‑run mode (default true) – useful for testing without sending messages.
-            from src.config import toggle_dry_run
+            from .config import toggle_dry_run
             new_state = toggle_dry_run()
             logging.info("⚙️ Dry‑run mode toggled to %s via command", new_state)

@@ -19,6 +19,9 @@ whatsapp_profile/
 *.log
 .DS_Store
 Thumbs.db
-# Database
-data/*.db
-
+# Registro de entregas e bancos locais do conector
+data/
+*.db
+*.db-wal
+*.db-shm
+*.db.lock
