@@ -80,3 +80,25 @@ def test_segunda_execucao_nao_baixa_nem_grava_de_novo(conexao, arquivos, monkeyp
 def test_titulo_do_endereco_e_data():
     assert faketrue.titulo_do_endereco(UOL) == "Vacina gripe"
     assert faketrue.data_de("2021-05-03T10:00:00") is not None and faketrue.data_de("") is None
+
+
+def test_pagina_que_redireciona_para_a_inicial_usa_o_corpus(conexao, arquivos, monkeypatch):  # noqa: F811
+    _paginas_falsas(monkeypatch)
+
+    def ler(url):
+        final = "https://g1.globo.com/" if url == G1 else url
+        return Pagina(url=final, titulo="g1 - O portal de notícias", texto="Menu do portal. " * 20, data="2026-10-15")
+
+    monkeypatch.setattr(faketrue, "ler_pagina", ler)
+    _rodar(conexao, arquivos)
+    origem, titulo = conexao.execute("SELECT origem, titulo FROM documentos WHERE url = %s", (G1,)).fetchone()
+    assert origem == "faketrue_corpus" and titulo == "Vacina"
+
+
+def test_somente_urls_limita_o_processamento(conexao, arquivos, monkeypatch):  # noqa: F811
+    _paginas_falsas(monkeypatch)
+    pares = faketrue.ler_corpus(arquivos[0])
+    r = faketrue.ingerir(pares, faketrue.ler_golden_set(arquivos[1]), conexao=conexao, modelo=ModeloFalso(),
+                         pausa_s=0, somente_urls={UOL})
+    assert r["novo"] == 1
+    assert conexao.execute("SELECT url FROM documentos").fetchall() == [(UOL,)]

@@ -38,6 +38,7 @@ from urllib.parse import urlparse
 import requests
 
 from app.db.base_checagens import Documento, conectar, gravar_boato, gravar_documento
+from app.ingestao.validacao import motivo_para_recusar, slug
 from app.rag.busca import USER_AGENT, agencia_de, ler_pagina
 
 ORIGEM_PAGINA = "faketrue"
@@ -120,10 +121,8 @@ def data_de(valor: str) -> date | None:
 
 
 def titulo_do_endereco(url: str) -> str:
-    """Título provisório a partir do fim da URL, para documentos sem página lida."""
-    ultimo = [s for s in urlparse(url).path.split("/") if s][-1:] or [urlparse(url).hostname or url]
-    slug = re.sub(r"\.(s?html?|ghtml|php)$", "", ultimo[0])
-    return re.sub(r"[-_]+", " ", slug).strip().capitalize()
+    """Título provisório a partir da parte descritiva da URL, para documentos sem página lida."""
+    return (slug(url) or urlparse(url).hostname or url).capitalize()
 
 
 @lru_cache(maxsize=None)
@@ -165,6 +164,9 @@ def baixar(url: str, pausa_s: float) -> tuple[str, object]:
 
 
 def montar_documento(url: str, pagina, texto_corpus: str | None) -> Documento | None:
+    if not isinstance(pagina, Exception) and (motivo := motivo_para_recusar(url, pagina.url)):
+        log.warning("Página recusada, usando o texto do corpus: %s (%s)", url, motivo)
+        pagina = ValueError(motivo)
     if not isinstance(pagina, Exception):
         return Documento(url=url, texto=pagina.texto, natureza=natureza_de(url, pagina.texto), origem=ORIGEM_PAGINA,
                          titulo=pagina.titulo, agencia=agencia_de(url), publicado_em=data_de(pagina.data))
@@ -176,7 +178,8 @@ def montar_documento(url: str, pagina, texto_corpus: str | None) -> Documento | 
 
 
 def ingerir(pares: list[Par], golden: GoldenSet, *, conexao, modelo,
-            baixar_paginas: bool = True, atualizar: bool = False, paralelo: int = 4, pausa_s: float = 0.5) -> Counter:
+            baixar_paginas: bool = True, atualizar: bool = False, paralelo: int = 4, pausa_s: float = 0.5,
+            somente_urls: set[str] | None = None) -> Counter:
     resultado: Counter = Counter()
     # Texto do corpus por URL de checagem; páginas do Boatos.org não têm texto de reserva (o corpus só traz o boato).
     reserva: dict[str, str | None] = {}
@@ -185,7 +188,8 @@ def ingerir(pares: list[Par], golden: GoldenSet, *, conexao, modelo,
         reserva.setdefault(par.url_boato, None)
 
     existentes = {linha[0] for linha in conexao.execute("SELECT url FROM documentos")}
-    pendentes = [url for url in reserva if atualizar or url not in existentes]
+    pendentes = [url for url in reserva if (atualizar or url not in existentes)
+                 and (somente_urls is None or url in somente_urls)]
     resultado["ja_na_base"] = len(reserva) - len(pendentes)
     log.info("%d páginas no corpus; %d a processar", len(reserva), len(pendentes))
 
@@ -229,6 +233,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--sem-download", action="store_true", help="usa só o texto do corpus")
     parser.add_argument("--atualizar", action="store_true", help="baixa de novo páginas que já estão na base")
     parser.add_argument("--paralelo", type=int, default=4)
+    parser.add_argument("--url", action="append", dest="urls", metavar="URL",
+                        help="processa só esta URL do corpus (pode repetir); use com --atualizar para refazer")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -242,7 +248,8 @@ def main(argv: list[str] | None = None) -> None:
     inicio = time.time()
     with conectar() as conexao:
         resultado = ingerir(pares, golden, conexao=conexao, modelo=modelo_padrao(),
-                            baixar_paginas=not args.sem_download, atualizar=args.atualizar, paralelo=args.paralelo)
+                            baixar_paginas=not args.sem_download, atualizar=args.atualizar, paralelo=args.paralelo,
+                            somente_urls=set(args.urls) if args.urls else None)
     log.info("Concluído em %.0f s: %s", time.time() - inicio, dict(sorted(resultado.items())))
 
 

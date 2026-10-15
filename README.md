@@ -124,6 +124,15 @@ python -m app.ingestao.faketrue \
 
 `--limite N` processa só os N primeiros pares (teste) e `--sem-download` usa apenas o texto do corpus.
 
+Páginas que hoje levam a outro conteúdo (redirecionamento para a página inicial do site, galerias de fotos) são recusadas, e o documento fica com o texto do corpus. `--atualizar --url <URL>` refaz documentos específicos.
+
+**Auditoria** (`app/ingestao/auditoria.py`): lista documentos cujo texto talvez não seja a matéria da URL (endereço sem relação com o título e o texto, anos citados muito depois da publicação, galerias), para revisão manual. `--corrigir-metadados` reaplica as regras atuais de agência, natureza e título sem recalcular embeddings, por exemplo depois de incluir uma agência em `AGENCIAS_CHECAGEM`.
+
+```bash
+python -m app.ingestao.auditoria
+python -m app.ingestao.auditoria --corrigir-metadados
+```
+
 ### Testar o núcleo sem WhatsApp
 
 ```python

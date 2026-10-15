@@ -25,6 +25,7 @@ from bs4 import BeautifulSoup
 
 from app.db.base_checagens import Documento, conectar, gravar_documento
 from app.ingestao.faketrue import permitido_por_robots
+from app.ingestao.validacao import motivo_para_recusar
 from app.rag.busca import DOMINIOS_SEM_COLETA, USER_AGENT, casa_dominio, ler_pagina
 
 log = logging.getLogger(__name__)
@@ -118,7 +119,9 @@ def montar_documento(item: Item, agencia: str, pausa_s: float = 0.5) -> Document
     if not casa_dominio(item.url, DOMINIOS_SEM_COLETA) and permitido_por_robots(item.url):
         try:
             pagina = ler_pagina(item.url)
-            if pagina.texto.strip():
+            if motivo := motivo_para_recusar(item.url, pagina.url):
+                log.warning("Página recusada, usando o feed: %s (%s)", item.url, motivo)
+            elif pagina.texto.strip():
                 texto, titulo, origem = pagina.texto, pagina.titulo or titulo, "rss_pagina"
                 data = _data(pagina.data) or data
         except (requests.RequestException, ValueError) as erro:
