@@ -13,7 +13,7 @@ Busca de evidências, seleção de trechos literais e síntese da tutora. São f
 
 ## Busca na base de checagens (`base.py`)
 
-O nó de busca consulta a base antes da web e só vai à web quando a base não traz nenhuma checagem (`app/graph/nodes/busca.py`). Se `DATABASE_URL` estiver vazia ou o banco falhar, a busca segue só pela web.
+O nó de busca consulta a base antes da web (`app/graph/nodes/busca.py`). A web entra quando a base não traz nenhuma checagem, quando a checagem mais recente encontrada tem mais de 6 meses (`BASE_CHECAGEM_RECENTE_MESES`) ou quando nenhuma checagem tem data. É a regra de *freshness*: um boato antigo pode voltar quando o assunto já mudou. A resposta sempre informa a data da checagem mais recente encontrada; se ela for antiga, o aviso diz que o assunto pode ter mudado, a base fica com até 3 vagas e a web completa o resto. Se `DATABASE_URL` estiver vazia ou o banco falhar, a busca segue só pela web.
 
 - **Boato parente (claim matching).** A mensagem recebida é comparada com `boatos_conhecidos`; um boato parecido leva à checagem ligada a ele, que vem em primeiro lugar. O texto do boato nunca vira evidência.
 - **Trechos.** A afirmação extraída é comparada com os trechos de checagens e notícias. Um documento aparece uma vez, com os 3 trechos mais parecidos (na ordem do texto) para a síntese escolher citações.

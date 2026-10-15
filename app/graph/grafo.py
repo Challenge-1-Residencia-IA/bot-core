@@ -64,8 +64,8 @@ def analisar(pedido: PedidoAnalise, grafo=None, *, excluir_urls=()) -> Resultado
         "chat_id": pedido.chat_id, "mensagem_id": pedido.mensagem_id, "mensagem": pedido.texto,
         "contexto": pedido.contexto,
         # Zera o que veio da mensagem anterior da mesma conversa (o checkpointer guarda o estado).
-        "afirmacoes": [], "elementos_manipulacao": [], "evidencias": [], "sintese": {},
-        "resposta_texto": "", "saida": {},
+        "afirmacoes": [], "elementos_manipulacao": [], "evidencias": [], "busca": {}, "avisos": [],
+        "sintese": {}, "resposta_texto": "", "saida": {},
     }
     try:
         estado = grafo.invoke(entrada, {"configurable": {"thread_id": pedido.chat_id,
@@ -80,6 +80,7 @@ def analisar(pedido: PedidoAnalise, grafo=None, *, excluir_urls=()) -> Resultado
         "elementos_manipulacao": estado.get("elementos_manipulacao", []),
         "fontes": [e.get("url") for e in estado.get("evidencias", []) if isinstance(e, dict)],
         "fontes_da_base": sum(e.get("fonte_busca") == "base" for e in estado.get("evidencias", [])),
+        "busca": estado.get("busca", {}),
         "saida": estado.get("saida", {}),
         "tempo_s": round(time.perf_counter() - inicio, 2),
     }
