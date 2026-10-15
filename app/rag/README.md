@@ -18,7 +18,7 @@ O nó de busca consulta a base antes da web (`app/graph/nodes/busca.py`). A web 
 - **Boato parente (claim matching).** A mensagem recebida é comparada com `boatos_conhecidos`; um boato parecido leva à checagem ligada a ele, que vem em primeiro lugar. O texto do boato nunca vira evidência.
 - **Trechos.** A afirmação extraída é comparada com os trechos de checagens e notícias. Um documento aparece uma vez, com os 3 trechos mais parecidos (na ordem do texto) para a síntese escolher citações.
 - **Busca híbrida** (*hybrid search*): cada busca junta a similaridade vetorial (HNSW, cosseno) e a busca textual em português (`tsvector`, palavras unidas por OU), fundidas pela Reciprocal Rank Fusion com `k = 60`. A busca iterativa do pgvector 0.8 (`hnsw.iterative_scan`) evita perder resultados por causa dos filtros.
-- **Limiares** de similaridade vetorial: `BASE_LIMIAR_TRECHO` (padrão 0,82) e `BASE_LIMIAR_BOATO` (padrão 0,88). São provisórios e precisam ser calibrados com o golden set: o E5 concentra as similaridades entre 0,7 e 0,9.
+- **Limiares** de similaridade vetorial, calibrados em 2026-10-15: `BASE_LIMIAR_TRECHO` = 0,85 (checagem esperada em 1º lugar em 85% do golden set v1) e `BASE_LIMIAR_BOATO` = 0,93 (variações do mesmo boato acima do limiar em 97% dos casos; boatos diferentes do mesmo tema em 17%). O E5 concentra as similaridades entre 0,8 e 0,95, então diferenças de centésimos importam. Os números são otimistas: o golden set é da mesma época da base e as afirmações usadas foram as anotadas, não as extraídas pelo Qwen.
 - **`excluir_urls`** esconde documentos numa análise; a avaliação usa isso para simular checagens fora da base (IA-07) sem manter outro índice. No grafo, chega por `analisar(pedido, excluir_urls=[...])`.
 
 ## Origem

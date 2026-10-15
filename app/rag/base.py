@@ -10,8 +10,17 @@ Duas buscas, sempre na mesma ordem:
 Cada busca combina a similaridade vetorial (E5, índice HNSW, cosseno) com a busca textual em português
 (`tsvector`), pela Reciprocal Rank Fusion (Cormack et al., 2009): `soma de 1 / (k + posição)` nas duas
 listas. Só entram resultados com similaridade vetorial acima do limiar, para a busca textual sozinha
-não trazer páginas que só dividem palavras soltas com a mensagem. Os limiares ainda precisam ser
-calibrados com o golden set (o E5 concentra as similaridades entre 0,7 e 0,9).
+não trazer páginas que só dividem palavras soltas com a mensagem.
+
+Limiares calibrados em 2026-10-15 (base com 2.907 páginas do FakeTrue.Br e 1.698 boatos):
+- Trechos (0,85), com as afirmações do golden set v1: a checagem esperada fica em 1º lugar em 85% dos
+  itens e entre as 5 primeiras em 89%. Com a checagem esperada escondida (simulação do IA-07), o que
+  passa do limiar é, na maioria, o mesmo boato checado por outra agência. Com 0,82, todos os itens
+  traziam 5 fontes, quase todas sem relação; com 0,86, a checagem esperada caía para 72%.
+- Boato parente (0,93), com as 205 checagens que têm duas ou mais variações do mesmo boato: variações
+  do mesmo boato ficam acima de 0,93 em 97% dos casos (mediana 0,98); boatos diferentes sobre o mesmo
+  tema, em 17% (mediana 0,90). Com 0,88, boatos de outros assuntos passavam em 77% e ficavam na frente
+  da checagem certa.
 """
 
 from __future__ import annotations
@@ -35,10 +44,10 @@ EF_SEARCH = 100
 """Tamanho da lista dinâmica do HNSW na consulta; maior que o padrão (40) por causa dos filtros."""
 MAX_TERMOS = 30
 
-LIMIAR_TRECHO = float(os.getenv("BASE_LIMIAR_TRECHO", "0.82"))
-"""Similaridade mínima entre a afirmação e um trecho. Provisório: calibrar com o golden set."""
-LIMIAR_BOATO = float(os.getenv("BASE_LIMIAR_BOATO", "0.88"))
-"""Similaridade mínima entre a mensagem e um boato conhecido. Provisório: calibrar com o golden set."""
+LIMIAR_TRECHO = float(os.getenv("BASE_LIMIAR_TRECHO", "0.85"))
+"""Similaridade mínima entre a afirmação e um trecho (calibrada; ver o início do módulo)."""
+LIMIAR_BOATO = float(os.getenv("BASE_LIMIAR_BOATO", "0.93"))
+"""Similaridade mínima entre a mensagem e um boato conhecido (calibrada; ver o início do módulo)."""
 
 
 @dataclass
