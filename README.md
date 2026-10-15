@@ -53,6 +53,7 @@ app/
 ├── prompts/          # prompts versionados
 ├── main.py           # FastAPI (endpoints de teste; não usado pelo fluxo do WhatsApp)
 ├── db/              # acesso ao PostgreSQL + pgvector (base de checagens)
+├── ingestao/        # scripts que preenchem a base de checagens
 ├── search/          # esqueleto: provedores de busca
 └── telegram/         # esqueleto antigo, do canal descartado
 
@@ -108,6 +109,20 @@ alembic upgrade head
 Mudanças no esquema entram sempre como uma nova migração, nunca alterando o banco à mão.
 
 O serviço `db` usa o PostgreSQL 17, a mesma versão do Neon. Um volume criado por outra versão impede o container de subir (`database files are incompatible with server`); se o banco local não tiver nada a preservar, recrie-o com `docker compose down -v`.
+
+### Base de checagens
+
+A base é preenchida por scripts de ingestão em `app/ingestao/`, idempotentes: rodar de novo só processa páginas que ainda não estão no banco, e um documento só ganha novos embeddings quando o texto muda. Os embeddings usam o `intfloat/multilingual-e5-base` em CPU (cerca de 1,5 GB de RAM, 40 ms por consulta), baixado do Hugging Face na primeira execução.
+
+**FakeTrue.Br** (`app/ingestao/faketrue.py`): baixa de novo as páginas das checagens, das notícias e do Boatos.org pelas URLs do corpus, porque o texto do corpus vem sem maiúsculas, sem título e sem data; o texto do corpus só é usado quando a página não pode ser lida. Respeita o `robots.txt` de cada site. O texto de cada boato vai para `boatos_conhecidos`, ligado à sua página no Boatos.org; os boatos do golden set ficam de fora, para não contaminar a avaliação.
+
+```bash
+python -m app.ingestao.faketrue \
+  --corpus ../experimentos/data/raw/FakeTrue.Br/FakeTrueBr_corpus.csv \
+  --golden-set ../experimentos/data/processed/golden_set_v1.jsonl
+```
+
+`--limite N` processa só os N primeiros pares (teste) e `--sem-download` usa apenas o texto do corpus.
 
 ### Testar o núcleo sem WhatsApp
 
