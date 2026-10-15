@@ -29,3 +29,21 @@ def test_dominio_sem_coleta_usa_apenas_feed(monkeypatch):
                     "Texto fornecido pelo feed.", date(2026, 10, 15))
     doc = rss.montar_documento(item, "Agência Lupa", pausa_s=0)
     assert doc.origem == "rss_feed" and doc.texto == item.texto_feed
+
+
+def _item(titulo="Vídeo falso mostra Lula em Paris", url="https://www.boatos.org/politica/lula-paris.html",
+          categorias=("Política",)):
+    return rss.Item(url, titulo, "texto", date(2026, 10, 5), categorias)
+
+
+def test_descarta_paginas_de_resultado_eleitoral():
+    assert rss.e_checagem(_item())
+    assert rss.e_checagem(_item("Vídeo mostra fraude na apuração das eleições 2026? #boato", categorias=("Eleições-2026",)))
+    assert not rss.e_checagem(_item("Resultado das eleições 2026 em Barreiras: senador"))
+    assert not rss.e_checagem(_item(url="https://www.boatos.org/eleicoes-2026/resultado-eleicoes-2026-senador-barreiras"))
+    assert not rss.e_checagem(_item(categorias=("Eleições-2026", "Apuração 2026")))
+
+
+def test_ler_feed_guarda_as_categorias():
+    xml = XML.replace(b"<pubDate>Thu", b"<category><![CDATA[Apura\xc3\xa7\xc3\xa3o 2026]]></category><pubDate>Thu")
+    assert rss.ler_feed(xml, ["boatos.org"])[0].categorias == ("Apuração 2026",)
