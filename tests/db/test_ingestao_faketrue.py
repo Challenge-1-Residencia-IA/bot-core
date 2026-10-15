@@ -49,8 +49,7 @@ def _paginas_falsas(monkeypatch, falham=()):
 
 def _rodar(conexao, arquivos, **kwargs):
     pares = faketrue.ler_corpus(arquivos[0])
-    urls, textos = faketrue.ler_golden_set(arquivos[1])
-    return faketrue.ingerir(pares, urls, textos, conexao=conexao, modelo=ModeloFalso(), pausa_s=0, **kwargs)
+    return faketrue.ingerir(pares, faketrue.ler_golden_set(arquivos[1]), conexao=conexao, modelo=ModeloFalso(), pausa_s=0, **kwargs)
 
 
 def test_ingere_paginas_com_reserva_e_exclui_o_golden_set(conexao, arquivos, monkeypatch):  # noqa: F811
