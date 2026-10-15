@@ -28,7 +28,7 @@ import sys
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -66,23 +66,46 @@ def ler_corpus(caminho: Path) -> list[Par]:
 
 
 def _normalizar(texto: str) -> str:
-    return " ".join(texto.casefold().split())
+    """Minúsculas, só letras e números separados por um espaço (ignora pontuação e aspas)."""
+    return " ".join(re.findall(r"\w+", texto.casefold()))
 
 
-def ler_golden_set(caminho: Path) -> tuple[set[str], set[str]]:
-    """URLs esperadas e textos (normalizados) das mensagens do golden set."""
-    urls, textos = set(), set()
+@dataclass
+class GoldenSet:
+    """O que identifica um boato do golden set dentro do corpus.
+
+    Um mesmo boato aparece em vários pares do corpus, com outra URL e pequenas variações de texto, então
+    a comparação é por trecho: o começo da mensagem ou uma afirmação anotada contida no texto do boato.
+    """
+
+    urls: set[str] = field(default_factory=set)
+    trechos: set[str] = field(default_factory=set)
+
+    def contem(self, par: Par) -> bool:
+        if par.url_boato in self.urls:
+            return True
+        texto = _normalizar(par.texto_boato)
+        return any(trecho in texto for trecho in self.trechos)
+
+
+TAMANHO_TRECHO = 60
+MINIMO_TRECHO = 25
+"""Trechos mais curtos que isso (afirmações genéricas) dariam falsos positivos."""
+
+
+def ler_golden_set(caminho: Path) -> GoldenSet:
+    golden = GoldenSet()
     with caminho.open(encoding="utf-8") as arquivo:
         for linha in arquivo:
             item = json.loads(linha)
             if item.get("fonte_esperada"):
-                urls.add(item["fonte_esperada"].strip())
-            textos.add(_normalizar(item["texto"]))
-    return urls, textos
-
-
-def do_golden_set(par: Par, urls: set[str], textos: set[str]) -> bool:
-    return par.url_boato in urls or _normalizar(par.texto_boato) in textos
+                golden.urls.add(item["fonte_esperada"].strip())
+            candidatos = [item["texto"], *(a.get("texto", "") for a in item.get("afirmacoes", []))]
+            for candidato in candidatos:
+                trecho = _normalizar(candidato)[:TAMANHO_TRECHO].strip()
+                if len(trecho) >= MINIMO_TRECHO:
+                    golden.trechos.add(trecho)
+    return golden
 
 
 def natureza_de(url: str, texto: str) -> str:
@@ -152,7 +175,7 @@ def montar_documento(url: str, pagina, texto_corpus: str | None) -> Documento | 
                      titulo=titulo_do_endereco(url), agencia=agencia_de(url))
 
 
-def ingerir(pares: list[Par], urls_golden: set[str], textos_golden: set[str], *, conexao, modelo,
+def ingerir(pares: list[Par], golden: GoldenSet, *, conexao, modelo,
             baixar_paginas: bool = True, atualizar: bool = False, paralelo: int = 4, pausa_s: float = 0.5) -> Counter:
     resultado: Counter = Counter()
     # Texto do corpus por URL de checagem; páginas do Boatos.org não têm texto de reserva (o corpus só traz o boato).
@@ -187,7 +210,7 @@ def ingerir(pares: list[Par], urls_golden: set[str], textos_golden: set[str], *,
 
     na_base = {linha[0] for linha in conexao.execute("SELECT url FROM documentos")}
     for par in pares:
-        if do_golden_set(par, urls_golden, textos_golden):
+        if golden.contem(par):
             resultado["boato_do_golden_set"] += 1
             continue
         if par.url_boato not in na_base or not par.texto_boato.strip():
@@ -215,10 +238,10 @@ def main(argv: list[str] | None = None) -> None:
     pares = ler_corpus(args.corpus)
     if args.limite:
         pares = pares[:args.limite]
-    urls_golden, textos_golden = ler_golden_set(args.golden_set)
+    golden = ler_golden_set(args.golden_set)
     inicio = time.time()
     with conectar() as conexao:
-        resultado = ingerir(pares, urls_golden, textos_golden, conexao=conexao, modelo=modelo_padrao(),
+        resultado = ingerir(pares, golden, conexao=conexao, modelo=modelo_padrao(),
                             baixar_paginas=not args.sem_download, atualizar=args.atualizar, paralelo=args.paralelo)
     log.info("Concluído em %.0f s: %s", time.time() - inicio, dict(sorted(resultado.items())))
 
