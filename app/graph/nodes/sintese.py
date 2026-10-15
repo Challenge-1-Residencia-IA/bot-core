@@ -16,10 +16,19 @@ NATUREZA_SEM_BUSCA = {
 }
 
 
+SEM_AFIRMACAO = (
+    "Não encontrei na sua mensagem uma informação que dê para verificar. Envie o texto da mensagem, a "
+    "notícia ou o link que você recebeu e quer conferir. Por enquanto, cada mensagem é analisada "
+    "separadamente, então perguntas sobre uma resposta anterior ainda não são entendidas."
+)
+
+
 def gerar_sintese(state: EstadoAnalise) -> dict:
     principal = afirmacao_principal(state)
+    if not state.get("afirmacoes"):
+        return {"sintese": {"sem_busca": "sem_afirmacao"}, "resposta_texto": SEM_AFIRMACAO}
     if principal is None:
-        natureza = (state.get("afirmacoes") or [{}])[0].get("natureza", "opiniao")
+        natureza = state["afirmacoes"][0]["natureza"]
         texto = (NATUREZA_SEM_BUSCA.get(natureza, NATUREZA_SEM_BUSCA["opiniao"])
                  + " Se ela citar um fato específico (número, data, declaração), envie esse trecho para eu buscar fontes.")
         return {"sintese": {"sem_busca": natureza}, "resposta_texto": texto}

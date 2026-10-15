@@ -69,10 +69,7 @@ def _normalizar(bruto: dict) -> dict:
 
 
 def extrair_afirmacoes(state: EstadoAnalise) -> dict:
+    """Sem afirmação extraída (texto sem sentido, pergunta solta, conversa), a lista fica vazia e o grafo
+    não busca: usar a mensagem inteira como consulta traz páginas sem relação com ela."""
     bruto = llm.gerar_json(PROMPT, f"Mensagem recebida pelo usuário:\n\"\"\"\n{state['mensagem']}\n\"\"\"", ESQUEMA)
-    resultado = _normalizar(bruto)
-    if not resultado["afirmacoes"]:
-        # Sem afirmação extraída, a mensagem inteira vira a consulta (a busca ainda pode achar a checagem).
-        resultado["afirmacoes"] = [{"texto": state["mensagem"][:300], "natureza": "fato_verificavel",
-                                    "tema": "outro", "o_que_verificar": state["mensagem"][:200]}]
-    return resultado
+    return _normalizar(bruto)

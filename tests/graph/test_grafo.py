@@ -29,7 +29,7 @@ def pipeline_falso(monkeypatch):
 
     def buscar(afirmacao, **_):
         chamadas["busca"].append(afirmacao)
-        return [Evidencia(url="https://www.boatos.org/x.html", titulo="Vacina tem chip", dominio="boatos.org",
+        return [Evidencia(url="https://www.boatos.org/x.html", titulo=f"Checagem: {afirmacao}", dominio="boatos.org",
                           trecho="t", tipo="checagem", agencia="Boatos.org")]
 
     def sintetizar(afirmacao, evidencias, *, mensagem=None, **_):
@@ -82,6 +82,26 @@ def test_opiniao_nao_busca(pipeline_falso, monkeypatch):
     resultado = analisar(pedido("Acho que o prefeito é péssimo"), construir_grafo())
     assert pipeline_falso["busca"] == [] and pipeline_falso["sintese"] == []
     assert "opinião" in resultado.resposta_texto
+
+
+def test_sem_afirmacao_nao_busca_nem_sintetiza(pipeline_falso, monkeypatch):
+    """Texto sem sentido ou pergunta solta: a mensagem não vira consulta de busca."""
+    monkeypatch.setattr(extracao.llm, "gerar_json", lambda *a, **k: {"afirmacoes": [], "elementos_manipulacao": []})
+    resultado = analisar(pedido("Mmska"), construir_grafo())
+    assert pipeline_falso["busca"] == [] and pipeline_falso["sintese"] == []
+    assert resultado.resposta_texto.startswith("Não encontrei na sua mensagem uma informação")
+
+
+def test_fontes_sem_nenhum_termo_da_afirmacao_sao_descartadas(pipeline_falso, monkeypatch):
+    def buscar(afirmacao, **_):
+        return [Evidencia(url="https://a.org/helicopteros", titulo="Helicópteros dos EUA pousam em base",
+                          dominio="a.org", trecho="Militares americanos", tipo="checagem", agencia="Lupa"),
+                Evidencia(url="https://b.org/chip", titulo="Chip em vacina é boato", dominio="b.org",
+                          trecho="Não há chip", tipo="web")]
+
+    monkeypatch.setattr(busca, "buscar", buscar)
+    resultado = analisar(pedido("URGENTE: a vacina tem chip"), construir_grafo())
+    assert resultado.detalhes["fontes"] == ["https://b.org/chip"]
 
 
 def test_llm_indisponivel_vira_resposta_de_indisponibilidade(pipeline_falso, monkeypatch):
