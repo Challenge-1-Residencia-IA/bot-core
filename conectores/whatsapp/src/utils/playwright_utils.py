@@ -7,13 +7,15 @@ They are imported as:
         abrir_navegador, fechar_navegador,
         abrir_chat_por_nome, fechar_chat_ativo, obter_nome_chat_ativo,
         enviar_mensagem, chat_eh_grupo, obter_mensagens_recebidas,
-        obter_contexto_conversa,
+        obter_contexto_conversa, listar_chats_nao_lidos,
     )
 
 Selectors follow the WhatsApp Web DOM as of October 2026: the chat list is
 ``#pane-side``, the open chat is ``#main`` (name in
 ``[data-testid="conversation-info-header-chat-title-name"]``) and each message
-is a ``[data-id]`` row whose direction is inferred by ``_JS_LINHAS``. WhatsApp
+is a ``[data-id]`` row whose direction is inferred by ``_JS_LINHAS``. In the
+chat list, each chat is a ``[role="row"]`` whose unread badge is
+``[data-testid="icon-unread-count"]``. WhatsApp
 Web changes this markup without notice; when the scanner stops seeing
 messages, these selectors are the first thing to check.
 """
@@ -134,6 +136,29 @@ async def abrir_chat_por_nome(page: Page, chat_nome: str) -> bool:
             return await obter_nome_chat_ativo(page) == chat_nome
         await asyncio.sleep(0.1)
     return False
+
+
+_JS_CHATS_NAO_LIDOS = """() => {
+  const pane = document.querySelector('#pane-side');
+  if (!pane) return [];
+  return [...pane.querySelectorAll('[role="row"]')].map(row => {
+    const selo = row.querySelector('[data-testid="icon-unread-count"]');
+    const titulo = row.querySelector('span[title]');
+    if (!selo || !titulo) return null;
+    const numero = (selo.innerText || '').match(/\\d+/) || (selo.getAttribute('aria-label') || '').match(/\\d+/);
+    return {nome: (titulo.getAttribute('title') || '').trim(), nao_lidas: numero ? parseInt(numero[0], 10) : 1};
+  }).filter(c => c && c.nome);
+}"""
+
+
+async def listar_chats_nao_lidos(page: Page) -> List[Dict[str, object]]:
+    """Return the chats with an unread badge in the side list, top first.
+
+    Each item is ``{"nome": <title>, "nao_lidas": <int>}``. Unsaved contacts
+    appear under their phone number. The list is virtualised, so only rows
+    rendered on screen are seen; chats with new messages move to the top.
+    """
+    return await page.evaluate(_JS_CHATS_NAO_LIDOS) or []
 
 
 async def fechar_chat_ativo(page: Page) -> None:

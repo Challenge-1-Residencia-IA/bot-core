@@ -8,9 +8,16 @@ core's queue. The result is awaited in a separate asyncio task (one per
 message), so the scanning loop is never blocked, and the reply is handed to
 the dispatcher through an in‑memory ``asyncio.Queue`` in the same process.
 
+Two access modes (``modo_acesso``):
+
+- ``allowlist`` (``scanner_loop``): only chats in ``contatos_permitidos`` are
+  opened/analysed (empty = none), polled in turn;
+- ``aberto`` (``scanner_aberto_loop``): any individual chat with an unread
+  badge is read; its messages go to the ``Agendador`` (limited sessions,
+  waiting list), not straight to the core.
+
 Protections (adapted from ``bot-test/botfinal.py``):
 
-- only chats in ``contatos_permitidos`` are opened/analysed (empty = none);
 - the first time a chat is opened after start-up, the messages already
   visible are marked ``baseline`` and never analysed;
 - every message is claimed in the delivery journal (``DeliveryStore``); only a
@@ -23,12 +30,15 @@ import time
 import logging
 
 from app.contrato import FILA, JOB_ANALISAR, PedidoAnalise, ResultadoAnalise
+from app.guardrails import RESPOSTAS_RECUSA, verificar_entrada
 from .utils.playwright_utils import (
     abrir_chat_por_nome,
     obter_contexto_conversa,
     obter_mensagens_recebidas,
+    obter_nome_chat_ativo,
     fechar_chat_ativo,
     chat_eh_grupo,
+    listar_chats_nao_lidos,
 )
 from .config import MENSAGEM_INDISPONIVEL, MENSAGEM_MIDIA, TIMEOUT_JOB_S
 from .delivery_store import message_key
@@ -259,6 +269,110 @@ async def scanner_loop(page, arq_pool, lock, config, fila_respostas: asyncio.Que
                     await processar_chat_aberto(
                         page, nome, arq_pool, fila_respostas, store, config, chats_inicializados
                     )
+            await asyncio.sleep(config["intervalo_scanner"])
+        except asyncio.CancelledError:
+            break
+        except Exception as erro:
+            logging.error("⚠️ [Scanner] Erro na varredura: %s", erro)
+            await asyncio.sleep(1.5)
+
+
+# ---------------------------------------------------------------------------
+# Open access mode
+# ---------------------------------------------------------------------------
+async def coletar_novas_aberto(page, nome: str, nao_lidas: int, agendador, fila_respostas: asyncio.Queue,
+                               store, config, chats_inicializados: set) -> int:
+    """Hand the new incoming messages of the open chat ``nome`` to the scheduler (lock held).
+
+    The first time a chat is seen after start-up, only its last ``nao_lidas``
+    incoming messages are new (taken from the unread badge); the older visible
+    ones become ``baseline``. Afterwards, every unclaimed incoming message is new.
+    Returns how many messages were claimed.
+    """
+    mensagens = await obter_mensagens_recebidas(page)
+    if nome not in chats_inicializados:
+        antigas = mensagens[:-nao_lidas] if nao_lidas > 0 else mensagens
+        marcar_baseline(store, nome, antigas)
+        chats_inicializados.add(nome)
+
+    novas = 0
+    contexto = None
+    for item in mensagens:
+        chave = message_key(nome, item["id"])
+        if not store.claim(chave):
+            continue
+        novas += 1
+        texto = (item.get("texto") or "").strip()
+        if not texto:
+            logging.info("📎 [Scanner] Mensagem sem texto – pedindo texto ou link")
+            store.state(chave, "ready")
+            await fila_respostas.put(RespostaTarefa(
+                chat_nome=nome, mensagem_id=item["id"], resposta_texto=MENSAGEM_MIDIA, chave=chave,
+            ))
+            continue
+        # Deterministic input rails (no LLM): greetings, out-of-scope requests and injection attempts are
+        # answered here at once, without the "received" notice, a session slot or a place in the queue.
+        # The core still applies the full rails (NeMo + Qwen) to everything that gets through.
+        decisao = verificar_entrada(texto)
+        if not decisao.permitida:
+            logging.info("🛡️ [Scanner] Mensagem recusada no conector (%s)", decisao.motivo)
+            store.state(chave, "ready")
+            await fila_respostas.put(RespostaTarefa(
+                chat_nome=nome, mensagem_id=item["id"], resposta_texto=RESPOSTAS_RECUSA[decisao.motivo][0],
+                chave=chave,
+            ))
+            continue
+        if contexto is None:
+            contexto = await obter_contexto_conversa(page, config.get("limite_contexto", 15))
+        tarefa = MensagemTarefa(chat_nome=nome, mensagem_id=item["id"], texto=texto, contexto=contexto)
+        if not await agendador.adicionar(tarefa, chave):
+            store.state(chave, "blocked")
+    return novas
+
+
+async def scanner_aberto_loop(page, lock, config, fila_respostas: asyncio.Queue, store, agendador):
+    """Read every individual chat with an unread badge and queue its new messages.
+
+    At the start of each cycle the open chat (left open by the dispatcher) is
+    checked for messages that arrived while it was open, then closed: with no
+    chat open, every new message shows an unread badge in the list.
+    """
+    logging.info("👀 [Scanner] Modo aberto: atendendo qualquer conversa individual com mensagem não lida")
+    ultimo_pulso = time.time()
+    chats_ignorados = set()
+    chats_inicializados = set()
+
+    while True:
+        try:
+            await _await_if_paused()
+            if time.time() - ultimo_pulso > 15:
+                logging.info("💓 [Scanner] Em espera... Nenhuma mensagem nova no momento.")
+                ultimo_pulso = time.time()
+
+            async with lock:
+                aberto = await obter_nome_chat_ativo(page)
+                if aberto is not None:
+                    if aberto in chats_inicializados:
+                        await coletar_novas_aberto(page, aberto, 0, agendador, fila_respostas, store, config,
+                                                   chats_inicializados)
+                    await fechar_chat_ativo(page)
+                nao_lidos = await listar_chats_nao_lidos(page)
+
+            for chat in nao_lidos:
+                nome = chat["nome"]
+                if nome in chats_ignorados:
+                    continue
+                async with lock:
+                    if not await abrir_chat_por_nome(page, nome):
+                        continue
+                    if config["ignorar_grupos"] and await chat_eh_grupo(page):
+                        logging.info("👥 [Scanner] Grupo ignorado")
+                        chats_ignorados.add(nome)
+                        await fechar_chat_ativo(page)
+                        continue
+                    await coletar_novas_aberto(page, nome, int(chat.get("nao_lidas") or 0), agendador,
+                                               fila_respostas, store, config, chats_inicializados)
+                    await fechar_chat_ativo(page)
             await asyncio.sleep(config["intervalo_scanner"])
         except asyncio.CancelledError:
             break

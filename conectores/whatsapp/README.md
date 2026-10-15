@@ -22,9 +22,30 @@ WhatsApp Web ──► scanner ──enqueue_job("analisar_mensagem", fila "bot-
 - Se o núcleo não responde dentro de `timeout_job_s`, ou o job falha, o dispatcher recebe a mensagem curta `mensagem_indisponivel`.
 - `chat_id` enviado ao núcleo é o **nome do chat** exibido no WhatsApp Web (o DOM não expõe um id estável da conversa).
 
+## Modos de acesso
+
+`modo_acesso` (ou `WHATSAPP_MODO_ACESSO`) define quem o bot atende:
+
+| Modo | Quem é atendido | Uso |
+|---|---|---|
+| `allowlist` (padrão) | Só os chats em `contatos_permitidos` | Desenvolvimento e testes do time |
+| `aberto` | Qualquer conversa individual (grupos são ignorados) | Demonstrações e uso público |
+
+No modo aberto, o LLM roda numa única GPU, então a vazão é controlada no conector (`src/sessoes.py` e `src/agendador.py`), seguindo o padrão de *rate limiting* com *backpressure*:
+
+- **Sessões limitadas:** até `sessoes_max_ativas` (10) pessoas atendidas ao mesmo tempo. A sessão começa na primeira mensagem e termina após `sessao_inatividade_s` (600 s) sem mensagens; nunca termina com uma análise pendente.
+- **Fila de espera:** acima do limite, a pessoa recebe a posição na fila de espera e entra, em ordem de chegada, quando uma sessão termina ("Chegou a sua vez!"). A mensagem enviada enquanto ela esperava é analisada nesse momento.
+- **Prioridade:** mensagens de quem já tem sessão ativa são analisadas antes de qualquer pessoa da fila de espera.
+- **Uma análise por pessoa de cada vez**, em ordem de chegada entre as pessoas, com no máximo `analises_simultaneas` (1) jobs no núcleo. Até `pendentes_max_por_chat` (3) mensagens por pessoa ficam guardadas; as seguintes recebem `mensagem_excesso`.
+- **Avisos imediatos:** cada mensagem aceita recebe na hora uma confirmação com a estimativa de espera (`tempo_medio_analise_s`); a primeira traz uma apresentação do bot. Os avisos não entram no registro de entregas.
+- **Dados pessoais:** no modo aberto, o log identifica o chat só por um hash curto (`chat#…`), não pelo número de telefone.
+
+Os textos dos avisos ficam em `src/config.py` (`PADROES_MODO_ABERTO`) e podem ser trocados no `config.yaml`.
+
 ## Como o WhatsApp Web é lido
 
-- O scanner **consulta em ciclo os contatos permitidos**: abre cada conversa pelo **nome exato** na lista lateral (`#pane-side`) e lê as mensagens novas. Não usa os selos de "não lida" nem a caixa de busca, cujo formato muda entre versões e idiomas. A conversa precisa estar visível na lista lateral; se não estiver, o log avisa.
+- **Modo allowlist:** o scanner **consulta em ciclo os contatos permitidos**: abre cada conversa pelo **nome exato** na lista lateral (`#pane-side`) e lê as mensagens novas. A conversa precisa estar visível na lista lateral; se não estiver, o log avisa.
+- **Modo aberto:** o scanner lê as conversas com selo de não lidas (`[data-testid="icon-unread-count"]` dentro de cada `[role="row"]` da lista lateral). Na primeira leitura de um chat, só as últimas N mensagens recebidas são novas, sendo N o número do selo; as anteriores viram `baseline`. Contatos não salvos aparecem pelo número. A cada ciclo, o chat deixado aberto pelo dispatcher é conferido e fechado, para que toda mensagem nova gere selo. A lista lateral é virtualizada: só as conversas renderizadas na tela são vistas, mas conversas com mensagem nova sobem para o topo.
 - O nome do chat aberto vem de `[data-testid="conversation-info-header-chat-title-name"]`. Cada mensagem é uma linha `[data-id]`; a direção é inferida pelo remetente em `data-pre-plain-text`, pelos rótulos ("Nome:", "Você:"), pelo status de entrega ("Enviada", "Entregue", "Lida") e pelos ícones `tail-in`/`tail-out`. Texto de mensagens citadas é ignorado.
 - O envio só conta como feito quando a mensagem aparece no chat com status de entrega; caso contrário, vira `uncertain` e não é reenviada.
 - Em modo headless, o navegador se identifica como um Chrome comum: com o user agent "HeadlessChrome", o WhatsApp Web não carrega a lista de conversas.
@@ -34,8 +55,8 @@ WhatsApp Web ──► scanner ──enqueue_job("analisar_mensagem", fila "bot-
 
 Adaptadas da integração RAG–WhatsApp do `experimentos` (`bot-test/botfinal.py` e `delivery_store.py`):
 
-- **Allowlist fail-closed:** só os chats em `contatos_permitidos`, com o nome exato, são abertos e analisados. Se a lista estiver vazia, nenhum contato é atendido, e um aviso aparece no log ao iniciar. Fora do dry-run, o dispatcher confere a lista de novo antes de enviar.
-- **Histórico inicial (baseline):** ao iniciar, o conector abre cada contato permitido e marca as mensagens já visíveis como `baseline`, sem analisá-las. O contato que não abre nesse momento recebe o baseline na primeira abertura.
+- **Allowlist fail-closed (modo `allowlist`):** só os chats em `contatos_permitidos`, com o nome exato, são abertos e analisados. Se a lista estiver vazia, nenhum contato é atendido, e um aviso aparece no log ao iniciar. Fora do dry-run, o dispatcher confere a lista de novo antes de enviar.
+- **Histórico inicial (baseline):** no modo allowlist, ao iniciar, o conector abre cada contato permitido e marca as mensagens já visíveis como `baseline`, sem analisá-las. O contato que não abre nesse momento recebe o baseline na primeira abertura.
 - **Registro de entregas** (`src/delivery_store.py`, SQLite em `data/deliveries.db`):
   - A chave é `sha256(chat + "\0" + mensagem_id)`. O registro não guarda texto nem nome.
   - O scanner só enfileira se o `claim` der certo. O dispatcher só envia depois de `reserve_send` (`ready` → `sending`).
@@ -56,7 +77,10 @@ Estados do registro: `baseline`, `queued`, `analyzing`, `ready`, `sending`, `sen
 |---|---|---|---|
 | `mode_dry_run` | `WHATSAPP_DRY_RUN` | `true` | Só registra a resposta no log, não envia |
 | `headless` | `WHATSAPP_HEADLESS` | `false` | Chromium sem janela (depois do primeiro login) |
-| `contatos_permitidos` | `WHATSAPP_CONTATOS_PERMITIDOS` (lista JSON) | `[]` | Chats atendidos; vazio = nenhum |
+| `modo_acesso` | `WHATSAPP_MODO_ACESSO` | `allowlist` | `allowlist` ou `aberto` (ver Modos de acesso) |
+| `contatos_permitidos` | `WHATSAPP_CONTATOS_PERMITIDOS` (lista JSON) | `[]` | Modo allowlist: chats atendidos; vazio = nenhum |
+| `sessoes_max_ativas`, `sessao_inatividade_s` | | `10`, `600` | Modo aberto: sessões simultâneas e inatividade que encerra a sessão |
+| `pendentes_max_por_chat`, `analises_simultaneas` | | `3`, `1` | Modo aberto: mensagens guardadas por pessoa e jobs no núcleo ao mesmo tempo |
 | `perfil_navegador` | `WHATSAPP_PERFIL_DIR` | `whatsapp_profile` | Perfil persistente do Chromium |
 | `registro_entregas` | `WHATSAPP_REGISTRO_ENTREGAS` | `data/deliveries.db` | Registro de entregas |
 | `limite_resposta_chars` | — | `12000` | Respostas maiores são descartadas (`blocked`) |
@@ -109,6 +133,8 @@ conectores/whatsapp/
 ├─ src/
 │  ├─ main.py           # entrypoint: navegador, pool ARQ, scanner, dispatcher
 │  ├─ scanner.py        # acha mensagens, enfileira no núcleo, espera o resultado
+│  ├─ sessoes.py        # modo aberto: sessões limitadas e fila de espera
+│  ├─ agendador.py      # modo aberto: fila de análises, prioridade e avisos
 │  ├─ dispatcher.py     # envia as respostas (ou registra, em dry-run)
 │  ├─ control.py        # pausa e dry-run pelo console
 │  ├─ delivery_store.py # registro de entregas (hashes e estados, sem texto)

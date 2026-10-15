@@ -10,7 +10,7 @@ __pycache__/
 *$py.class
 
 # WhatsApp session profile (contains session tokens & cookies)
-whatsapp_profile/
+whatsapp_profile*/
 
 # Environment variables & secrets
 .env

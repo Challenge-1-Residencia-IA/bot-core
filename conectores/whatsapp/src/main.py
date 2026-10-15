@@ -54,7 +54,9 @@ from app.contrato import FILA
 from .config import CONFIG, PERFIL_DIR, REDIS_DB, REDIS_HOST, REDIS_PORT, REGISTRO_ENTREGAS_PATH
 from .delivery_store import DeliveryStore
 from .control import monitor_pause_input
-from .scanner import scanner_loop
+from .scanner import scanner_aberto_loop, scanner_loop
+from .agendador import Agendador
+from .sessoes import GerenciadorSessoes
 from .dispatcher import dispatcher_loop
 from .utils.playwright_utils import abrir_navegador, fechar_navegador
 
@@ -90,8 +92,11 @@ async def main():
     # Ensure config is loaded (the module ``src.config`` already does this).
     _ = CONFIG  # reference to avoid unused-import lint warnings
 
-    # Allowlist: fail-closed when empty
-    if not CONFIG["contatos_permitidos"]:
+    # Access mode. Allowlist: fail-closed when empty
+    if CONFIG["modo_acesso"] == "aberto":
+        logging.info("🌐 Modo aberto: qualquer conversa individual, até %s sessões ativas e fila de espera",
+                     CONFIG["sessoes_max_ativas"])
+    elif not CONFIG["contatos_permitidos"]:
         logging.warning(
             "🚫 contatos_permitidos está vazio: o bot NÃO vai atender nenhum contato (fail-closed). "
             "Configure config.yaml ou WHATSAPP_CONTATOS_PERMITIDOS."
@@ -132,14 +137,23 @@ async def main():
     fila_respostas: asyncio.Queue = asyncio.Queue()
 
     logging.info(
-        "⚙️ Modo simulação (dry-run): %s | headless: %s",
+        "⚙️ Modo simulação (dry-run): %s | acesso: %s | headless: %s",
         CONFIG["mode_dry_run"],
+        CONFIG["modo_acesso"],
         CONFIG["headless"],
     )
 
     # Create background tasks
     tasks = []
-    tasks.append(asyncio.create_task(scanner_loop(page, arq_pool, lock, CONFIG, fila_respostas, store), name="scanner"))
+    if CONFIG["modo_acesso"] == "aberto":
+        sessoes = GerenciadorSessoes(int(CONFIG["sessoes_max_ativas"]), float(CONFIG["sessao_inatividade_s"]))
+        agendador = Agendador(sessoes, arq_pool, fila_respostas, store, CONFIG)
+        tasks.append(asyncio.create_task(
+            scanner_aberto_loop(page, lock, CONFIG, fila_respostas, store, agendador), name="scanner"))
+        tasks.append(asyncio.create_task(agendador.loop(), name="agendador"))
+    else:
+        tasks.append(asyncio.create_task(
+            scanner_loop(page, arq_pool, lock, CONFIG, fila_respostas, store), name="scanner"))
     tasks.append(asyncio.create_task(dispatcher_loop(page, lock, fila_respostas, store), name="dispatcher"))
     tasks.append(asyncio.create_task(monitor_pause_input(), name="pause_listener"))
 

@@ -6,7 +6,9 @@ It also respects the pause/resume mechanism via ``src.control.pause_event``.
 Send rules (adapted from ``bot-test/botfinal.py``):
 
 - dry-run: the reply is only logged (state ``dry_run``);
-- contact outside ``contatos_permitidos`` or reply longer than
+- notices of the open mode (``aviso``) follow the same rules but are not
+  tracked in the delivery journal;
+- in ``allowlist`` mode, contact outside ``contatos_permitidos``; in any mode, reply longer than
   ``limite_resposta_chars``: discarded (state ``blocked``);
 - chat cannot be opened, or any error before sending: ``blocked``
   (no re-queue, no retry loop);
@@ -22,6 +24,15 @@ from .utils.playwright_utils import (
 )
 from .control import pause_event
 from .config import CONFIG
+from .delivery_store import message_key
+
+
+def rotulo_chat(nome: str) -> str:
+    """Chat name for the logs: in the open mode it is usually a stranger's phone
+    number, so only a short hash is logged (data minimisation, LGPD)."""
+    if CONFIG["modo_acesso"] == "aberto":
+        return "chat#" + message_key(nome, "")[:8]
+    return nome
 
 
 async def _await_if_paused():
@@ -46,22 +57,32 @@ async def dispatcher_loop(page, lock, fila_respostas: asyncio.Queue, store):
         except asyncio.CancelledError:
             break
         chave = resposta_tarefa.chave
+        rastreada = bool(chave) and not resposta_tarefa.aviso
+
+        def marcar(estado):
+            if rastreada:
+                store.state(chave, estado)
+
+        def estado_atual():
+            return store.get(chave) if rastreada else None
+
         try:
-            logging.info("🚀 [Despachante] RESPOSTA PRONTA (%s)", chave[:12])
-            logging.info("👤 Destinatário: %s", resposta_tarefa.chat_nome)
+            tipo = "AVISO" if resposta_tarefa.aviso else "RESPOSTA PRONTA"
+            logging.info("🚀 [Despachante] %s (%s)", tipo, chave[:12] or "-")
+            logging.info("👤 Destinatário: %s", rotulo_chat(resposta_tarefa.chat_nome))
             logging.info("💬 Resposta:\n%s", resposta_tarefa.resposta_texto)
 
             if CONFIG["mode_dry_run"]:
                 logging.info("🔒 [MODO SIMULAÇÃO] Resposta NÃO enviada ao WhatsApp.")
-                store.state(chave, "dry_run")
+                marcar("dry_run")
                 continue
 
-            if resposta_tarefa.chat_nome not in CONFIG["contatos_permitidos"]:
-                store.state(chave, "blocked")
+            if CONFIG["modo_acesso"] == "allowlist" and resposta_tarefa.chat_nome not in CONFIG["contatos_permitidos"]:
+                marcar("blocked")
                 logging.warning("🚫 [Despachante] Envio %s bloqueado: contato não autorizado.", chave[:12])
                 continue
             if len(resposta_tarefa.resposta_texto) > int(CONFIG["limite_resposta_chars"]):
-                store.state(chave, "blocked")
+                marcar("blocked")
                 logging.warning("🚫 [Despachante] Envio %s bloqueado: resposta com %d caracteres (limite %s).",
                                 chave[:12], len(resposta_tarefa.resposta_texto), CONFIG["limite_resposta_chars"])
                 continue
@@ -69,32 +90,32 @@ async def dispatcher_loop(page, lock, fila_respostas: asyncio.Queue, store):
             async with lock:
                 nome_atual = await obter_nome_chat_ativo(page)
                 if nome_atual != resposta_tarefa.chat_nome:
-                    logging.info("🔄 [Despachante] Navegando para o chat de '%s'…", resposta_tarefa.chat_nome)
+                    logging.info("🔄 [Despachante] Navegando para o chat de '%s'…", rotulo_chat(resposta_tarefa.chat_nome))
                     sucesso = await abrir_chat_por_nome(page, resposta_tarefa.chat_nome)
                     if not sucesso or await obter_nome_chat_ativo(page) != resposta_tarefa.chat_nome:
-                        store.state(chave, "blocked")
+                        marcar("blocked")
                         logging.warning("⚠️ Não foi possível abrir o chat de '%s'. Envio %s bloqueado.",
-                                        resposta_tarefa.chat_nome, chave[:12])
+                                        rotulo_chat(resposta_tarefa.chat_nome), chave[:12])
                         continue
-                if not store.reserve_send(chave):
+                if rastreada and not store.reserve_send(chave):
                     logging.warning("⚠️ [Despachante] Envio %s não reservado (estado %s); ignorado.",
                                     chave[:12], store.get(chave))
                     continue
                 await enviar_mensagem(page, resposta_tarefa.resposta_texto, resposta_tarefa.chat_nome)
-                store.state(chave, "sent")
-                logging.info("✅ [Despachante] Envio confirmado na interface para '%s'", resposta_tarefa.chat_nome)
+                marcar("sent")
+                logging.info("✅ [Despachante] Envio confirmado na interface para '%s'", rotulo_chat(resposta_tarefa.chat_nome))
         except asyncio.CancelledError:
-            if store.get(chave) == "sending":
-                store.state(chave, "uncertain")
+            if estado_atual() == "sending":
+                marcar("uncertain")
             raise
         except Exception as erro:
-            if store.get(chave) == "sending":
-                store.state(chave, "uncertain")
+            if estado_atual() == "sending":
+                marcar("uncertain")
                 logging.error("⚠️ [Despachante] Envio %s não confirmado (%s); sem reenvio automático.",
                               chave[:12], type(erro).__name__)
             else:
-                if store.get(chave) == "ready":
-                    store.state(chave, "blocked")
+                if estado_atual() == "ready":
+                    marcar("blocked")
                 logging.error("⚠️ [Despachante] Erro inesperado antes do envio (%s): %s", chave[:12], erro)
             await asyncio.sleep(1.0)
         finally:

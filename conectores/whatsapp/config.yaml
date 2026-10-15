@@ -3,7 +3,18 @@ headless: false             # true = Chromium sem janela (só depois do primeiro
 perfil_navegador: whatsapp_profile      # perfil persistente do Chromium (sessão do WhatsApp; fora do git)
 registro_entregas: data/deliveries.db   # registro de entregas (só hashes e estados; fora do git)
 
-# Nomes exatos dos chats atendidos. Lista vazia = ninguém é atendido (fail-closed).
+# allowlist = só os contatos_permitidos; aberto = qualquer conversa individual, com sessões limitadas
+# e fila de espera. Sobrescrito por WHATSAPP_MODO_ACESSO.
+modo_acesso: allowlist
+
+# Modo aberto: pessoas atendidas ao mesmo tempo; a sessão termina após este tempo sem mensagens.
+sessoes_max_ativas: 10
+sessao_inatividade_s: 300
+pendentes_max_por_chat: 3     # mensagens guardadas por pessoa enquanto a anterior é analisada
+analises_simultaneas: 1       # jobs no núcleo ao mesmo tempo (uma GPU)
+tempo_medio_analise_s: 30     # usado só na estimativa de espera enviada ao usuário
+
+# Modo allowlist: nomes exatos dos chats atendidos. Lista vazia = ninguém é atendido (fail-closed).
 # Sobrescrito por WHATSAPP_CONTATOS_PERMITIDOS='["Nome 1", "Nome 2"]'.
 contatos_permitidos: []
 

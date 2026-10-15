@@ -30,4 +30,4 @@ datasets/
 *.db
 
 # Sessão do WhatsApp Web (tokens e cookies)
-whatsapp_profile/
+whatsapp_profile*/

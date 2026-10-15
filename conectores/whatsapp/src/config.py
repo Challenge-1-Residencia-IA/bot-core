@@ -7,6 +7,8 @@ Some keys can be overridden by environment variables (useful in Docker/VM):
 
 - ``WHATSAPP_DRY_RUN``  -> ``mode_dry_run`` (default ``true``)
 - ``WHATSAPP_HEADLESS`` -> ``headless`` (default ``false``)
+- ``WHATSAPP_MODO_ACESSO`` -> ``modo_acesso`` (``allowlist`` = only ``contatos_permitidos``;
+  ``aberto`` = any chat, with limited sessions and a waiting list)
 - ``WHATSAPP_CONTATOS_PERMITIDOS`` -> ``contatos_permitidos`` (JSON list; empty = nobody)
 - ``WHATSAPP_PERFIL_DIR`` -> ``perfil_navegador`` (persistent Chromium profile)
 - ``WHATSAPP_REGISTRO_ENTREGAS`` -> ``registro_entregas`` (delivery journal, SQLite)
@@ -56,6 +58,31 @@ def carregar_contatos(valor_env, valor_config) -> List[str]:
     return list(dict.fromkeys(item.strip() for item in valor))
 
 
+MODOS_ACESSO = ("allowlist", "aberto")
+PADROES_MODO_ABERTO = {
+    "sessoes_max_ativas": 10,
+    "sessao_inatividade_s": 600,
+    "pendentes_max_por_chat": 3,
+    "analises_simultaneas": 1,
+    "tempo_medio_analise_s": 30,
+    "mensagem_boas_vindas": (
+        "Olá! Eu ajudo a avaliar informações que você recebeu: mostro checagens já publicadas, fontes e sinais "
+        "de manipulação, sem dizer se é verdade ou mentira. Recebi sua mensagem e já vou analisar. {previsao}"
+    ),
+    "mensagem_recebida": "Recebi! {previsao}",
+    "mensagem_previsao_vez": "Estou analisando agora; a resposta costuma levar menos de um minuto.",
+    "mensagem_previsao_fila": "Há {a_frente} análise(s) antes da sua; a resposta deve chegar em cerca de {minutos} min.",
+    "mensagem_espera": (
+        "Muita gente está testando agora. Você está na posição {posicao} da fila de espera: aviso quando "
+        "chegar a sua vez e então analiso a mensagem que você enviou."
+    ),
+    "mensagem_sua_vez": "Chegou a sua vez! Já estou analisando a sua mensagem.",
+    "mensagem_excesso": (
+        "Ainda estou analisando as suas mensagens anteriores. Espere as respostas e depois envie esta de novo."
+    ),
+}
+
+
 def _caminho(valor: str) -> Path:
     caminho = Path(valor).expanduser()
     return caminho if caminho.is_absolute() else CONECTOR_DIR / caminho
@@ -67,6 +94,11 @@ CONFIG["headless"] = _env_bool("WHATSAPP_HEADLESS", bool(CONFIG.get("headless", 
 CONFIG["contatos_permitidos"] = carregar_contatos(
     os.getenv("WHATSAPP_CONTATOS_PERMITIDOS"), CONFIG.get("contatos_permitidos")
 )
+CONFIG["modo_acesso"] = (os.getenv("WHATSAPP_MODO_ACESSO") or CONFIG.get("modo_acesso") or "allowlist").strip().lower()
+if CONFIG["modo_acesso"] not in MODOS_ACESSO:
+    raise ValueError(f"modo_acesso deve ser um de {MODOS_ACESSO}")
+for _chave, _padrao in PADROES_MODO_ABERTO.items():
+    CONFIG.setdefault(_chave, _padrao)
 CONFIG.setdefault("limite_resposta_chars", 12000)
 CONFIG.setdefault(
     "mensagem_midia",
@@ -89,6 +121,7 @@ TIMEOUT_JOB_S = float(CONFIG["timeout_job_s"])
 MENSAGEM_INDISPONIVEL = CONFIG["mensagem_indisponivel"]
 MENSAGEM_MIDIA = CONFIG["mensagem_midia"]
 CONTATOS_PERMITIDOS = CONFIG["contatos_permitidos"]
+MODO_ABERTO = CONFIG["modo_acesso"] == "aberto"
 LIMITE_RESPOSTA_CHARS = int(CONFIG["limite_resposta_chars"])
 PERFIL_DIR = _caminho(os.getenv("WHATSAPP_PERFIL_DIR") or CONFIG.get("perfil_navegador", "whatsapp_profile"))
 REGISTRO_ENTREGAS_PATH = _caminho(

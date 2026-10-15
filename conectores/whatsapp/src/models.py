@@ -56,6 +56,9 @@ class RespostaTarefa:
     chave: str
         Delivery journal key (``delivery_store.message_key``); empty when the
         reply is not tracked.
+    aviso: bool
+        True for the short notices of the open access mode (received, waiting
+        list, "your turn"). Notices are not tracked in the delivery journal.
     """
 
     chat_nome: str
@@ -63,3 +66,4 @@ class RespostaTarefa:
     resposta_texto: str
     falha: bool = False
     chave: str = ""
+    aviso: bool = False
