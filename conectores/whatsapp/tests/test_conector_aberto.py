@@ -332,3 +332,17 @@ def test_aviso_em_dry_run_so_vai_para_o_log(pagina, store, monkeypatch, caplog):
     assert pagina.enviadas == []
     assert "Recebi!" in caplog.text
     assert "9999" not in caplog.text            # número de desconhecido não vai para o log
+
+
+def test_erro_do_nucleo_nao_registra_numero_do_chat(monkeypatch, caplog):
+    monkeypatch.setitem(CONFIG, "modo_acesso", "aberto")
+
+    class JobComErro:
+        async def result(self, timeout=None):
+            raise RuntimeError("falha para +55 11 9999-0000")
+
+    tarefa = _tarefa("+55 11 9999-0000", "mensagem")
+    with caplog.at_level("ERROR"):
+        asyncio.run(scanner.aguardar_resultado(JobComErro(), tarefa, asyncio.Queue()))
+    assert "chat#" in caplog.text
+    assert "9999" not in caplog.text

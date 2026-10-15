@@ -116,7 +116,8 @@ async def dispatcher_loop(page, lock, fila_respostas: asyncio.Queue, store):
             else:
                 if estado_atual() == "ready":
                     marcar("blocked")
-                logging.error("⚠️ [Despachante] Erro inesperado antes do envio (%s): %s", chave[:12], erro)
+                detalhe = type(erro).__name__ if CONFIG["modo_acesso"] == "aberto" else erro
+                logging.error("⚠️ [Despachante] Erro inesperado antes do envio (%s): %s", chave[:12], detalhe)
             await asyncio.sleep(1.0)
         finally:
             fila_respostas.task_done()

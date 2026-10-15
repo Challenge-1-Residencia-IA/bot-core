@@ -40,13 +40,19 @@ from .utils.playwright_utils import (
     chat_eh_grupo,
     listar_chats_nao_lidos,
 )
-from .config import MENSAGEM_INDISPONIVEL, MENSAGEM_MIDIA, TIMEOUT_JOB_S
+from .config import CONFIG, MENSAGEM_INDISPONIVEL, MENSAGEM_MIDIA, TIMEOUT_JOB_S
 from .delivery_store import message_key
 from .models import MensagemTarefa, RespostaTarefa
 from .control import pause_event
 
 # Strong references to the pending result tasks (asyncio keeps only weak ones).
 _TAREFAS_PENDENTES: set = set()
+
+
+def _rotulo_chat(nome: str) -> str:
+    if CONFIG["modo_acesso"] == "aberto":
+        return "chat#" + message_key(nome, "")[:8]
+    return nome
 
 
 def _marcar(store, chave, estado):
@@ -78,9 +84,9 @@ async def aguardar_resultado(job, tarefa: MensagemTarefa, fila_respostas: asynci
         if not texto:
             raise ValueError("resultado sem resposta_texto")
         if resultado.recusada:
-            logging.info("🛡️ [Scanner] Núcleo recusou a mensagem de '%s' (%s)", tarefa.chat_nome, resultado.motivo)
+            logging.info("🛡️ [Scanner] Núcleo recusou a mensagem de '%s' (%s)", _rotulo_chat(tarefa.chat_nome), resultado.motivo)
         if resultado.llm_indisponivel:
-            logging.warning("⚠️ [Scanner] Núcleo respondeu sem LLM para '%s'", tarefa.chat_nome)
+            logging.warning("⚠️ [Scanner] Núcleo respondeu sem LLM para '%s'", _rotulo_chat(tarefa.chat_nome))
         resposta = RespostaTarefa(
             chat_nome=tarefa.chat_nome,
             mensagem_id=tarefa.mensagem_id,
@@ -92,7 +98,10 @@ async def aguardar_resultado(job, tarefa: MensagemTarefa, fila_respostas: asynci
         raise
     except Exception as erro:
         tipo = "timeout" if isinstance(erro, (asyncio.TimeoutError, TimeoutError)) else type(erro).__name__
-        logging.error("❌ [Scanner] Núcleo não respondeu para '%s' (%s: %s)", tarefa.chat_nome, tipo, erro)
+        if CONFIG["modo_acesso"] == "aberto":
+            logging.error("❌ [Scanner] Núcleo não respondeu para '%s' (%s)", _rotulo_chat(tarefa.chat_nome), tipo)
+        else:
+            logging.error("❌ [Scanner] Núcleo não respondeu para '%s' (%s: %s)", tarefa.chat_nome, tipo, erro)
         resposta = RespostaTarefa(
             chat_nome=tarefa.chat_nome,
             mensagem_id=tarefa.mensagem_id,
@@ -127,7 +136,10 @@ async def enfileirar_analise(arq_pool, tarefa: MensagemTarefa, fila_respostas: a
             _queue_name=FILA,
         )
     except Exception as erro:
-        logging.error("❌ [Scanner] Falha ao enfileirar para o núcleo (%s: %s)", type(erro).__name__, erro)
+        if CONFIG["modo_acesso"] == "aberto":
+            logging.error("❌ [Scanner] Falha ao enfileirar para o núcleo (%s)", type(erro).__name__)
+        else:
+            logging.error("❌ [Scanner] Falha ao enfileirar para o núcleo (%s: %s)", type(erro).__name__, erro)
         _marcar(store, chave, "ready")
         await fila_respostas.put(RespostaTarefa(
             chat_nome=tarefa.chat_nome,
@@ -138,13 +150,14 @@ async def enfileirar_analise(arq_pool, tarefa: MensagemTarefa, fila_respostas: a
         ))
         return None
     if job is None:
-        logging.info("🔁 [Scanner] Mensagem %s já estava na fila – ignorada", tarefa.mensagem_id)
+        logging.info("🔁 [Scanner] Mensagem %s já estava na fila – ignorada", chave[:12] if CONFIG["modo_acesso"] == "aberto" else tarefa.mensagem_id)
         _marcar(store, chave, "interrupted")
         return None
     _marcar(store, chave, "analyzing")
+    identificador = chave[:12] if CONFIG["modo_acesso"] == "aberto" else tarefa.mensagem_id
     task = asyncio.create_task(
         aguardar_resultado(job, tarefa, fila_respostas, timeout, store, chave),
-        name=f"resultado:{tarefa.mensagem_id}",
+        name=f"resultado:{identificador}",
     )
     _TAREFAS_PENDENTES.add(task)
     task.add_done_callback(_TAREFAS_PENDENTES.discard)
@@ -273,7 +286,7 @@ async def scanner_loop(page, arq_pool, lock, config, fila_respostas: asyncio.Que
         except asyncio.CancelledError:
             break
         except Exception as erro:
-            logging.error("⚠️ [Scanner] Erro na varredura: %s", erro)
+            logging.error("⚠️ [Scanner] Erro na varredura: %s", type(erro).__name__ if CONFIG["modo_acesso"] == "aberto" else erro)
             await asyncio.sleep(1.5)
 
 
@@ -377,5 +390,5 @@ async def scanner_aberto_loop(page, lock, config, fila_respostas: asyncio.Queue,
         except asyncio.CancelledError:
             break
         except Exception as erro:
-            logging.error("⚠️ [Scanner] Erro na varredura: %s", erro)
+            logging.error("⚠️ [Scanner] Erro na varredura: %s", type(erro).__name__)
             await asyncio.sleep(1.5)
