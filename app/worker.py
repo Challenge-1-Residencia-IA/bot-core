@@ -31,6 +31,14 @@ async def startup(ctx: dict) -> None:
     if not llm.disponivel():
         logger.warning("Ollama não respondeu em %s com o modelo %s; as análises vão falhar até ele voltar",
                        config.OLLAMA_URL, config.OLLAMA_MODEL)
+    if config.DATABASE_URL:
+        # Carrega o modelo de embedding (~1 GB, alguns segundos) antes da primeira mensagem.
+        from app.rag.embeddings import modelo_padrao
+
+        try:
+            await asyncio.to_thread(modelo_padrao)
+        except Exception as erro:  # sem o modelo, a busca segue pela web
+            logger.warning("Modelo de embedding não carregou (%s); a busca vai usar só a web", erro)
 
 
 class WorkerSettings:

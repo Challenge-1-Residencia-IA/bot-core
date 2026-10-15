@@ -4,9 +4,22 @@ Busca de evidências, seleção de trechos literais e síntese da tutora. São f
 
 | Módulo | Função principal | Papel |
 |---|---|---|
+| `base.py` | `buscar_na_base(afirmacao, mensagem=None, *, limite=5, excluir_urls=()) -> list[Evidencia]` | Busca híbrida na base de checagens (pgvector + `tsvector`, RRF): boato parente primeiro, depois trechos |
+| `embeddings.py` | `modelo_padrao().consulta(texto)` / `.passagens(textos)` | Embeddings E5 (768 dim, CPU) da base |
+| `fatiamento.py` | `fatiar(texto)` | Trechos de até 180 palavras para indexar |
 | `busca.py` | `buscar_evidencias(afirmacao, *, max_resultados=6, provedor=None, leitor=None, ...) -> list[Evidencia]` | Checagens publicadas primeiro, depois a web geral (IA-03) |
 | `trechos.py` | `selecionar_trechos(afirmacao, texto, *, limite=1, pontuador=None) -> list[str]` | Trechos literais de cada página |
 | `sintese.py` | `sintetizar(afirmacao, evidencias, *, mensagem=None, gerar=None, blindar=None) -> RespostaTutora` | Técnicas de manipulação, citações literais, leitura lateral e lista de fontes |
+
+## Busca na base de checagens (`base.py`)
+
+O nó de busca consulta a base antes da web e só vai à web quando a base não traz nenhuma checagem (`app/graph/nodes/busca.py`). Se `DATABASE_URL` estiver vazia ou o banco falhar, a busca segue só pela web.
+
+- **Boato parente (claim matching).** A mensagem recebida é comparada com `boatos_conhecidos`; um boato parecido leva à checagem ligada a ele, que vem em primeiro lugar. O texto do boato nunca vira evidência.
+- **Trechos.** A afirmação extraída é comparada com os trechos de checagens e notícias. Um documento aparece uma vez, com os 3 trechos mais parecidos (na ordem do texto) para a síntese escolher citações.
+- **Busca híbrida** (*hybrid search*): cada busca junta a similaridade vetorial (HNSW, cosseno) e a busca textual em português (`tsvector`, palavras unidas por OU), fundidas pela Reciprocal Rank Fusion com `k = 60`. A busca iterativa do pgvector 0.8 (`hnsw.iterative_scan`) evita perder resultados por causa dos filtros.
+- **Limiares** de similaridade vetorial: `BASE_LIMIAR_TRECHO` (padrão 0,82) e `BASE_LIMIAR_BOATO` (padrão 0,88). São provisórios e precisam ser calibrados com o golden set: o E5 concentra as similaridades entre 0,7 e 0,9.
+- **`excluir_urls`** esconde documentos numa análise; a avaliação usa isso para simular checagens fora da base (IA-07) sem manter outro índice. No grafo, chega por `analisar(pedido, excluir_urls=[...])`.
 
 ## Origem
 
