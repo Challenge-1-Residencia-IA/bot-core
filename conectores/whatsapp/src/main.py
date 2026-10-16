@@ -58,6 +58,7 @@ from .scanner import scanner_aberto_loop, scanner_loop
 from .agendador import Agendador
 from .sessoes import GerenciadorSessoes
 from .dispatcher import dispatcher_loop
+from .painel import painel_loop
 from .utils.playwright_utils import abrir_navegador, fechar_navegador
 
 # Global asyncio lock to serialize Playwright interactions
@@ -155,6 +156,8 @@ async def main():
         tasks.append(asyncio.create_task(
             scanner_loop(page, arq_pool, lock, CONFIG, fila_respostas, store), name="scanner"))
     tasks.append(asyncio.create_task(dispatcher_loop(page, lock, fila_respostas, store), name="dispatcher"))
+    tasks.append(asyncio.create_task(
+        painel_loop(arq_pool, agendador if CONFIG["modo_acesso"] == "aberto" else None), name="painel"))
     console_task = (asyncio.create_task(monitor_pause_input(), name="pause_listener")
                     if sys.stdin.isatty() else None)
 

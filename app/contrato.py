@@ -14,6 +14,15 @@ FILA = "bot-core:analises"
 TIMEOUT_JOB_S = 300
 VERSAO_CONTRATO = 1
 
+# Painel de controle (deploy/painel.py), também pelo Redis. O conector publica o estado e lê os
+# comandos; o worker registra as análises concluídas. Contatos aparecem só pelo hash do nome.
+PAINEL_ESTADO_CONECTOR = "bot-core:painel:conector"
+PAINEL_COMANDOS = "bot-core:painel:comandos"
+PAINEL_EVENTOS = "bot-core:painel:eventos"
+PAINEL_ANALISES = "bot-core:painel:analises"
+PAINEL_HISTORICO = 30
+"""Quantos eventos e análises recentes cada lista guarda."""
+
 
 @dataclass
 class PedidoAnalise:
