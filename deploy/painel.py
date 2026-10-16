@@ -1,8 +1,9 @@
 """Painel de controle do bot no terminal da VM: estado ao vivo e comandos.
 
-Ao vivo (atualiza a cada 2 s; Ctrl+C sai):
+Ao vivo (atualiza a cada 2 s; Ctrl+C sai). No terminal, os comandos podem ser digitados direto na
+linha "> " do rodapé, sem "painel" na frente (ex.: "limite 3" e Enter):
     painel
-Comandos:
+Comandos (também de outro terminal ou script):
     painel pausar | retomar
     painel simulacao on|off
     painel limite <n>
@@ -123,21 +124,87 @@ def tela(r, ollama: list[dict], ollama_quando: float) -> str:
         for e in eventos:
             linhas.append(f"  {hora(e['quando'])}  {e['comando'].get('acao')}  {e['resultado']}")
     linhas.append("")
-    linhas.append(cor("Comandos: painel pausar | retomar | simulacao on|off | limite N | encerrar ID | "
-                      "bloquear ID | desbloquear ID", CINZA))
+    linhas.append(cor("Digite e tecle Enter: pausar | retomar | simulacao on|off | limite N | encerrar ID | "
+                      "bloquear ID | desbloquear ID   (Ctrl+C sai)", CINZA))
     return "\n".join(linhas)
 
 
+def processar_tecla(buffer: str, tecla: str) -> tuple[str, str | None]:
+    """Edita a linha de comando: devolve o novo buffer e, no Enter, a linha completa."""
+    if tecla in ("\r", "\n"):
+        return "", buffer.strip()
+    if tecla in ("\x7f", "\b"):
+        return buffer[:-1], None
+    if tecla == "\x15":  # Ctrl+U apaga a linha
+        return "", None
+    if tecla.isprintable():
+        return buffer + tecla, None
+    return buffer, None
+
+
+def executar_linha(r, linha: str) -> str:
+    """Executa um comando digitado na tela ao vivo e devolve o resultado para mostrar no rodapé."""
+    if not linha:
+        return ""
+    partes = linha.split()
+    if partes[0] == "painel":
+        partes = partes[1:]
+    try:
+        comando = montar_comando(partes)
+    except (SystemExit, IndexError):
+        return "comando inválido: pausar | retomar | simulacao on|off | limite N | encerrar ID | bloquear ID | desbloquear ID"
+    return enviar_e_esperar(r, comando)
+
+
 def ao_vivo(r) -> None:
-    ollama, ollama_quando = [], 0.0
+    """Tela ao vivo. Num terminal, lê as teclas sem eco (modo cbreak) e desenha a linha de comando no
+    rodapé, para a atualização da tela não apagar o que está sendo digitado."""
+    interativo = sys.stdin.isatty()
+    configuracao = None
+    if interativo:
+        import termios
+        import tty
+
+        configuracao = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+    ollama, ollama_quando, desenhada = [], 0.0, 0.0
+    buffer, mensagem, impressa = "", "", ""
     try:
         while True:
             if time.time() - ollama_quando > 15:  # a consulta ao Ollama é a parte lenta
                 ollama, ollama_quando = llm.situacao(timeout=3), time.time()
-            print(LIMPAR + tela(r, ollama, ollama_quando), flush=True)
-            time.sleep(2)
+            if time.time() - desenhada >= 2:
+                corpo = tela(r, ollama, ollama_quando)
+                desenhada = time.time()
+            rodape = (f"\n{mensagem}\n> {buffer}" if interativo else "")
+            saida = LIMPAR + corpo + rodape
+            if saida != impressa:  # só redesenha quando algo mudou (sem piscar)
+                print(saida, end="" if interativo else "\n", flush=True)
+                impressa = saida
+            if not interativo:
+                time.sleep(2)
+                continue
+            import select
+
+            alterou = False
+            while select.select([sys.stdin], [], [], 0.1 if not alterou else 0)[0]:
+                tecla = sys.stdin.read(1)
+                buffer, linha = processar_tecla(buffer, tecla)
+                alterou = True
+                if linha is not None:
+                    print(f"\nenviando: {linha} …", end="", flush=True)
+                    mensagem = executar_linha(r, linha)
+                    desenhada = 0.0  # redesenha já, com o efeito do comando
+                    break
+            if not alterou:
+                time.sleep(0.1)
     except KeyboardInterrupt:
         print()
+    finally:
+        if configuracao is not None:
+            import termios
+
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, configuracao)
 
 
 def montar_comando(args: list[str]) -> dict:
@@ -153,18 +220,24 @@ def montar_comando(args: list[str]) -> dict:
     raise SystemExit(__doc__)
 
 
-def enviar(r, comando: dict) -> int:
+SEM_RESPOSTA = "sem resposta do conector em 10 s (ele está rodando?); o comando fica na fila até ele voltar"
+
+
+def enviar_e_esperar(r, comando: dict) -> str:
     antes = r.lindex(PAINEL_EVENTOS, 0)
     r.rpush(PAINEL_COMANDOS, json.dumps(comando, ensure_ascii=False))
     for _ in range(20):  # o conector lê os comandos a cada segundo
         time.sleep(0.5)
         ultimo = r.lindex(PAINEL_EVENTOS, 0)
         if ultimo is not None and ultimo != antes:
-            resultado = json.loads(ultimo)["resultado"]
-            print(resultado)
-            return 0 if resultado.startswith("ok") else 1
-    print("sem resposta do conector em 10 s (ele está rodando?); o comando fica na fila até ele voltar")
-    return 1
+            return json.loads(ultimo)["resultado"]
+    return SEM_RESPOSTA
+
+
+def enviar(r, comando: dict) -> int:
+    resultado = enviar_e_esperar(r, comando)
+    print(resultado)
+    return 0 if resultado.startswith("ok") else 1
 
 
 def main() -> int:
