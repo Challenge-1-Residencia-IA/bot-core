@@ -55,7 +55,7 @@ fi
 
 # Ferramentas de deploy num lugar estável (~/bot-core-runtime/bin): a verificação e a reversão não podem
 # depender de arquivos da release, que numa release antiga podem nem existir.
-FERRAMENTAS=(comando_ssh.sh reverter.sh releases.py fumaca.py registrar_mlflow.py)
+FERRAMENTAS=(comando_ssh.sh reverter.sh releases.py fumaca.py registrar_mlflow.py painel.sh)
 for ferramenta in "${FERRAMENTAS[@]}"; do
     if [[ -f "$DESTINO/deploy/$ferramenta" ]] && ! cmp -s "$DESTINO/deploy/$ferramenta" "$RUNTIME/bin/$ferramenta"; then
         install -D -m 755 "$DESTINO/deploy/$ferramenta" "$RUNTIME/bin/$ferramenta"
@@ -65,6 +65,11 @@ done
 
 METRICAS=""
 DECISAO="{}"
+
+# Atalho `painel` no PATH (sudo sem senha na VM).
+if [[ -x "$RUNTIME/bin/painel.sh" && "$(readlink /usr/local/bin/painel 2>/dev/null || true)" != "$RUNTIME/bin/painel.sh" ]]; then
+    sudo ln -sfn "$RUNTIME/bin/painel.sh" /usr/local/bin/painel && log "Atalho /usr/local/bin/painel criado"
+fi
 
 registrar() {  # registrar <status> [detalhe] [campea=1]; usa as métricas da avaliação, se houver
     local args=(registrar --commit "$SHA" --status "$1" --anterior "$ANTERIOR" --detalhe "${2:-}")

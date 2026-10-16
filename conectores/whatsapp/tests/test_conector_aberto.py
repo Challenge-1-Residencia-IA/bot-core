@@ -198,6 +198,7 @@ def test_excesso_de_mensagens_por_pessoa_e_recusado(store, monkeypatch):
 class AgendadorFalso:
     def __init__(self):
         self.recebidas = []
+        self.bloqueados = set()
 
     async def adicionar(self, tarefa, chave):
         self.recebidas.append(tarefa.texto)

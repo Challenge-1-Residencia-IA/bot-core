@@ -41,6 +41,8 @@ class Agendador:
         self.config = config
         self.pendentes: Deque[_Item] = deque()
         self.em_andamento: Set[str] = set()
+        self.bloqueados: Set[str] = set()
+        """Chats bloqueados pelo painel: suas mensagens são ignoradas, sem resposta."""
 
     # -- notices -----------------------------------------------------------------------------------
     async def avisar(self, chat: str, texto: str) -> None:
@@ -88,6 +90,21 @@ class Agendador:
         logging.info("🗂️ [Agendador] Mensagem na fila (sessão %s, %d pendente(s) no total)",
                      "ativa" if admissao.ativa else f"em espera #{admissao.posicao_espera}", len(self.pendentes))
         return True
+
+    def encerrar(self, chat: str) -> int:
+        """Encerra a sessão (ou a espera) de ``chat`` e descarta as mensagens dele que ainda estão na fila.
+
+        Uma análise já em andamento termina e é entregue normalmente. Devolve quantas mensagens foram
+        descartadas; elas ficam como ``blocked`` no registro de entregas.
+        """
+        descartadas = [item for item in self.pendentes if item.tarefa.chat_nome == chat]
+        for item in descartadas:
+            self.pendentes.remove(item)
+            self.store.state(item.chave, "blocked")
+        self.sessoes.ativas.pop(chat, None)
+        self.sessoes.espera.pop(chat, None)
+        self.sessoes.marcar_ocupado(chat, chat in self.em_andamento)
+        return len(descartadas)
 
     def _proximo(self):
         for item in self.pendentes:

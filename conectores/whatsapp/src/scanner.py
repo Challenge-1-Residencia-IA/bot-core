@@ -315,6 +315,9 @@ async def coletar_novas_aberto(page, nome: str, nao_lidas: int, agendador, fila_
         if not store.claim(chave):
             continue
         novas += 1
+        if nome in agendador.bloqueados:  # bloqueado pelo painel: ignorado, sem resposta
+            store.state(chave, "blocked")
+            continue
         texto = (item.get("texto") or "").strip()
         if not texto:
             logging.info("📎 [Scanner] Mensagem sem texto – pedindo texto ou link")

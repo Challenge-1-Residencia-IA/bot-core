@@ -127,3 +127,46 @@ A reversão troca só o código; o banco fica como está. Por isso cada migraç�
 com a release anterior: primeiro acrescentar (colunas, tabelas e índices novos, sem remover nem
 renomear nada em uso), e só numa implantação seguinte, quando nenhuma release no disco usar mais o
 item antigo, remover.
+
+## Ollama reserva
+
+`OLLAMA_URLS` no `worker.env` lista os servidores em ordem de preferência, cada um com o nome do modelo
+depois de `#`:
+
+```
+OLLAMA_URLS="http://100.80.160.24:11434#qwen2.5:latest,http://100.122.1.92:11434#qwen2.5:7b"
+```
+
+Se o principal não responder, a análise vai para o seguinte; ele volta a ser o primeiro tentado depois de
+60 s. Para preparar um Mac como reserva (com o Tailscale conectado na mesma tailnet):
+
+```bash
+# 1. Instalar o Ollama (https://ollama.com/download) e baixar o modelo
+ollama pull qwen2.5:7b
+# 2. Aceitar conexões de fora do próprio Mac (a tailnet) e reabrir o app do Ollama
+launchctl setenv OLLAMA_HOST 0.0.0.0:11434
+# 3. Não dormir enquanto estiver servindo (deixar este terminal aberto)
+caffeinate -dimsu
+```
+
+Se o macOS perguntar, permitir conexões de entrada para o Ollama. Para conferir da VM:
+`curl -s http://100.122.1.92:11434/api/tags`.
+
+## Painel de controle
+
+`painel` (atalho instalado pelo deploy em `/usr/local/bin`) mostra ao vivo o estado do bot e envia
+comandos ao conector, pelo Redis:
+
+```bash
+ssh -t bot-core painel                 # ao vivo (Ctrl+C sai)
+ssh bot-core painel pausar             # para de ler e enviar; retomar com "painel retomar"
+ssh bot-core painel simulacao on       # liga o modo simulação (off = envio real)
+ssh bot-core painel limite 3           # sessões ativas ao mesmo tempo
+ssh bot-core painel encerrar a1b2c3d4  # encerra a sessão e descarta a fila do contato
+ssh bot-core painel bloquear a1b2c3d4  # ignora o contato (desbloquear para voltar)
+```
+
+Mostra os serviços, a release no ar, cada servidor do Ollama, a fila do núcleo, as sessões ativas e em
+espera, as últimas análises (tempo, recusa, fontes da base ou da web, servidor que respondeu) e os
+últimos comandos. Os contatos aparecem pelo hash do nome. As mudanças feitas pelo painel valem até o
+conector reiniciar; depois, voltam os valores do `conector.env`.

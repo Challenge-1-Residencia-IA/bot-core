@@ -33,7 +33,7 @@ if [[ ! -d "$RUNTIME/repo.git" ]]; then
 fi
 git -C "$RUNTIME/repo.git" fetch --quiet --prune origin
 
-for ferramenta in comando_ssh.sh reverter.sh releases.py fumaca.py; do
+for ferramenta in comando_ssh.sh reverter.sh releases.py fumaca.py painel.sh; do
     install -m 755 "$AQUI/$ferramenta" "$RUNTIME/bin/$ferramenta"
 done
 echo "Ferramentas instaladas em $RUNTIME/bin"
