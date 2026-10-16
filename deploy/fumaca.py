@@ -4,7 +4,8 @@ A mensagem é uma saudação, que o guardrail de entrada recusa sem chamar o LLM
 teste confere Redis, worker, contrato da fila e grafo em poucos segundos, sem depender do Ollama. Se
 o worker estiver ocupado com uma análise real, o job espera na fila até `--timeout`.
 
-Uso (com as variáveis de `worker.env`): python -m deploy.fumaca [--timeout 300]
+Uso (com as variáveis de `worker.env` e a release no PYTHONPATH):
+    PYTHONPATH=~/bot-core-current python ~/bot-core-runtime/bin/fumaca.py [--timeout 300]
 """
 
 from __future__ import annotations

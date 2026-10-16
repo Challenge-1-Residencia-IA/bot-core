@@ -48,10 +48,20 @@ if [[ ! -d "$DESTINO" ]]; then
     mv "$TEMP" "$DESTINO"
 fi
 
+# Ferramentas de deploy num lugar estável (~/bot-core-runtime/bin): a verificação e a reversão não podem
+# depender de arquivos da release, que numa release antiga podem nem existir.
+FERRAMENTAS=(comando_ssh.sh reverter.sh releases.py fumaca.py)
+for ferramenta in "${FERRAMENTAS[@]}"; do
+    if [[ -f "$DESTINO/deploy/$ferramenta" ]] && ! cmp -s "$DESTINO/deploy/$ferramenta" "$RUNTIME/bin/$ferramenta"; then
+        install -D -m 755 "$DESTINO/deploy/$ferramenta" "$RUNTIME/bin/$ferramenta"
+        log "Ferramenta de deploy atualizada: $ferramenta"
+    fi
+done
+
 registrar() {  # registrar <status> [detalhe] [métricas em JSON]
     local args=(registrar --commit "$SHA" --status "$1" --anterior "$ANTERIOR" --detalhe "${2:-}")
     [[ -n "${3:-}" ]] && args+=(--metricas "$3")
-    "$PY" "$DESTINO/deploy/releases.py" "${args[@]}"
+    "$PY" "$RUNTIME/bin/releases.py" "${args[@]}"
 }
 abortar() { registrar abortada "$1"; falhar "$1 (nada mudou no ar; continua a release $ANTERIOR)"; }
 
@@ -101,7 +111,8 @@ verificar() {
     for unidade in "${UNIDADES[@]}"; do
         systemctl is-active --quiet "$unidade" || { log "$unidade não está ativo"; return 1; }
     done
-    (set -a; . "$RUNTIME/worker.env"; set +a; cd "$ATUAL" && "$PY" -m deploy.fumaca --timeout 300)
+    # shellcheck source=/dev/null
+    (set -a; . "$RUNTIME/worker.env"; set +a; cd "$ATUAL" && PYTHONPATH="$ATUAL" "$PY" "$RUNTIME/bin/fumaca.py" --timeout 300)
 }
 
 log "Colocando a release $CURTO no ar (antes: ${ANTERIOR:-nenhuma})"
@@ -129,13 +140,4 @@ for dir in "${ANTIGAS[@]}"; do
     [[ "$dir" == "$DESTINO" || "$dir" == "$ANTERIOR_DIR" ]] && continue
     log "Removendo a release antiga $(basename "$dir")"
     rm -rf "$dir"
-done
-
-# 8. Ferramentas de deploy num lugar estável: a reversão para uma release antiga não pode depender dos
-#    scripts daquela release, que podem nem existir nela.
-for ferramenta in comando_ssh.sh reverter.sh releases.py; do
-    if ! cmp -s "$DESTINO/deploy/$ferramenta" "$RUNTIME/bin/$ferramenta"; then
-        install -D -m 755 "$DESTINO/deploy/$ferramenta" "$RUNTIME/bin/$ferramenta"
-        log "Ferramenta de deploy atualizada: $ferramenta"
-    fi
 done

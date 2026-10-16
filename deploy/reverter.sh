@@ -44,7 +44,8 @@ sleep 15
 for unidade in "${UNIDADES[@]}"; do
     systemctl is-active --quiet "$unidade" || falhar "$unidade não subiu; conferir journalctl -u $unidade"
 done
-(set -a; . "$RUNTIME/worker.env"; set +a; cd "$ATUAL" && "$PY" -m deploy.fumaca --timeout 300) \
+# shellcheck source=/dev/null
+(set -a; . "$RUNTIME/worker.env"; set +a; cd "$ATUAL" && PYTHONPATH="$ATUAL" "$PY" "$RUNTIME/bin/fumaca.py" --timeout 300) \
     || falhar "o teste de fumaça falhou na release $RELEASE"
 
 "$PY" "$REGISTRO_PY" registrar --commit "${SHA:-$RELEASE}" --status reversao_manual \

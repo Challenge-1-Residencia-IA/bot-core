@@ -72,7 +72,7 @@ na `main`:
    implantação é abortada e a release no ar continua a mesma.
 5. Atualiza as unidades `bot-worker` e `bot-conector` que mudaram, troca o link `bot-core-current` de
    forma atômica e reinicia os dois serviços.
-6. Confere se os serviços ficaram ativos e roda o teste de fumaça (`python -m deploy.fumaca`): uma
+6. Confere se os serviços ficaram ativos e roda o teste de fumaça (`deploy/fumaca.py`): uma
    saudação enviada pela fila, que o worker responde sem LLM. Se falhar, volta sozinho para a release
    anterior.
 7. Mantém as 5 releases mais recentes, além da atual e da anterior.
