@@ -20,12 +20,15 @@ on:
         required: true
       DEPLOY_SSH_KNOWN_HOSTS:
         required: true
+      DEPLOY_HOST:
+        required: true
 
 permissions:
   contents: read
 
+# O endereço da VM na tailnet fica num segredo, nunca no repositório.
 env:
-  VM: ubuntu@100.75.117.66
+  VM: ubuntu@${{ secrets.DEPLOY_HOST }}
 
 jobs:
   vm:

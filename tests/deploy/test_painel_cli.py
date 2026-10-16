@@ -48,7 +48,7 @@ def test_tela_mostra_estado_sessoes_analises_e_comandos(monkeypatch):
                 "ativas": [{"id": "a1b2c3d4", "inativo_s": 12, "analisando": True, "pendentes": 0}],
                 "espera": [{"id": "e5f6a7b8", "posicao": 1, "pendentes": 1}]}
     analise = {"quando": 1e9, "chat": "a1b2c3d4", "duracao_s": 21.5, "recusada": False, "motivo": None,
-               "llm_indisponivel": False, "llm": "http://100.122.1.92:11434", "fontes": 4, "fontes_da_base": 3,
+               "llm_indisponivel": False, "llm": "http://mac-reserva.internal:11434", "fontes": 4, "fontes_da_base": 3,
                "web": True}
     evento = {"quando": 1e9, "comando": {"acao": "pausar"}, "resultado": "ok: bot pausado"}
     r = RedisFalso({PAINEL_ESTADO_CONECTOR: json.dumps(conector)},
@@ -59,7 +59,7 @@ def test_tela_mostra_estado_sessoes_analises_e_comandos(monkeypatch):
     tela = painel.tela(r, ollama, 1e9)
     for trecho in ("PAUSADO", "envio real", "principal", "reserva", "fila: 2 job(s) · em análise: 1",
                    "Sessões 1/10", "a1b2c3d4", "espera #1", "bloqueados: deadbeef",
-                   "4 fonte(s), 3 da base + web", "100.122.1.92", "ok: bot pausado"):
+                   "4 fonte(s), 3 da base + web", "mac-reserva.internal", "ok: bot pausado"):
         assert trecho in tela, trecho
 
 

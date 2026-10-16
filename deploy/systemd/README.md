@@ -131,10 +131,17 @@ item antigo, remover.
 ## Ollama reserva
 
 `OLLAMA_URLS` no `worker.env` lista os servidores em ordem de preferência, cada um com o nome do modelo
-depois de `#`:
+depois de `#`. Use apelidos, não os endereços da tailnet: cada apelido aponta para o endereço real no
+`/etc/hosts` da VM, fora do repositório. O nome precisa terminar em `.internal` (ou `.local`), porque o
+Ollama recusa com HTTP 403 nomes de host que não reconhece como locais.
 
 ```
-OLLAMA_URLS="http://100.80.160.24:11434#qwen2.5:latest,http://100.122.1.92:11434#qwen2.5:7b"
+# /etc/hosts da VM (endereços reais só aqui)
+<ip-do-pc-na-tailnet>   pc-principal.internal
+<ip-do-mac-na-tailnet>  mac-reserva.internal
+
+# ~/bot-core-runtime/worker.env
+OLLAMA_URLS="http://pc-principal.internal:11434#qwen2.5:latest,http://mac-reserva.internal:11434#qwen2.5:7b"
 ```
 
 Se o principal não responder, a análise vai para o seguinte; ele volta a ser o primeiro tentado depois de
@@ -150,7 +157,7 @@ caffeinate -dimsu
 ```
 
 Se o macOS perguntar, permitir conexões de entrada para o Ollama. Para conferir da VM:
-`curl -s http://100.122.1.92:11434/api/tags`.
+`curl -s http://mac-reserva.internal:11434/api/tags`.
 
 ## Painel de controle
 

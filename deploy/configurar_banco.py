@@ -37,7 +37,7 @@ def main():
         authority = quote(role) + ':' + quote(password) + '@' + url.netloc.rsplit('@', 1)[-1]
         database_url = urlunsplit((url.scheme, authority, url.path, url.query, url.fragment))
         values = {'DATABASE_URL': database_url,
-                  'OLLAMA_URL': source.get('OLLAMA_URL', 'http://100.80.160.24:11434'),
+                  'OLLAMA_URL': source.get('OLLAMA_URL', 'http://localhost:11434'),
                   'OLLAMA_MODEL': source.get('OLLAMA_MODEL', 'qwen2.5:latest'),
                   'REDIS_URL': 'redis://127.0.0.1:6379/0', 'PYTHONUNBUFFERED': '1'}
         if 'GUARDRAILS_NEMO' in source:
