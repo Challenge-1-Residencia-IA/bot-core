@@ -21,14 +21,17 @@ def main() -> int:
     redis.Redis.from_url(config.REDIS_URL).ping()
     with conectar() as conn:
         conn.execute("SELECT id FROM documentos LIMIT 1").fetchone()
-    if llm.disponivel():
+    servidores = llm.situacao(timeout=15)
+    for s in servidores:
+        print(f"Ollama {s['url']} ({s['modelo']}): {'ok' if s['ok'] else 'indisponível'} {s['erro']}".rstrip())
+    if any(s["ok"] for s in servidores):
         print("Redis, banco e Ollama disponíveis")
         return 0
     if args.exigir_ollama:
-        print(f"Ollama ou modelo {config.OLLAMA_MODEL} indisponível em {config.OLLAMA_URL}")
+        print("Nenhum servidor do Ollama disponível")
         return 1
-    print(f"Redis e banco disponíveis; AVISO: Ollama ou modelo {config.OLLAMA_MODEL} indisponível em "
-          f"{config.OLLAMA_URL} (o worker sobe e responde que o modelo está fora do ar)")
+    print("Redis e banco disponíveis; AVISO: nenhum servidor do Ollama disponível "
+          "(o worker sobe e responde que o modelo está fora do ar)")
     return 0
 
 

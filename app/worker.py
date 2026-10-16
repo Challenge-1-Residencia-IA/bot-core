@@ -28,9 +28,11 @@ async def analisar_mensagem(ctx: dict, pedido: dict) -> dict:
 async def startup(ctx: dict) -> None:
     from app import llm
 
-    if not llm.disponivel():
-        logger.warning("Ollama não respondeu em %s com o modelo %s; as análises vão falhar até ele voltar",
-                       config.OLLAMA_URL, config.OLLAMA_MODEL)
+    for servidor in llm.situacao(timeout=15):
+        if servidor["ok"]:
+            logger.info("Ollama disponível em %s (%s)", servidor["url"], servidor["modelo"])
+        else:
+            logger.warning("Ollama indisponível em %s (%s): %s", servidor["url"], servidor["modelo"], servidor["erro"])
     if config.DATABASE_URL:
         # Carrega o modelo de embedding (~1 GB, alguns segundos) antes da primeira mensagem.
         from app.rag.embeddings import modelo_padrao
