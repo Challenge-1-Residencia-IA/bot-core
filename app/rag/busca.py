@@ -34,6 +34,8 @@ AGENCIAS_CHECAGEM: list[tuple[str, str | None, str]] = [
     ("lupa.uol.com.br", None, "Agência Lupa"),
     ("lupa.news", None, "Agência Lupa"),
     ("agencialupa.org", None, "Agência Lupa"),
+    ("piaui.folha.uol.com.br", "/lupa/", "Agência Lupa"),
+    ("piaui.uol.com.br", "/lupa/", "Agência Lupa"),
     ("aosfatos.org", None, "Aos Fatos"),
     ("g1.globo.com", "/fato-ou-fake", "Fato ou Fake (G1)"),
     ("boatos.org", None, "Boatos.org"),

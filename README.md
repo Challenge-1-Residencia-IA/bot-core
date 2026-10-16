@@ -21,7 +21,7 @@ WhatsApp Web ◄──► conector (Playwright) ──job "analisar_mensagem"─
 - **Conector** (`conectores/whatsapp/`): lê o WhatsApp Web com Playwright, só nos contatos permitidos, envia cada mensagem ao núcleo e entrega a resposta. Não chama o LLM. Detalhes em [`conectores/whatsapp/README.md`](conectores/whatsapp/README.md).
 - **Núcleo** (`app/`): worker ARQ que executa o grafo LangGraph. O contrato entre as partes (nome do job, fila, formato do pedido e do resultado) fica em `app/contrato.py`, importado pelos dois lados.
 - **LLM**: Qwen 2.5 7B servido pelo Ollama, acessado por HTTP (`OLLAMA_URL`). O núcleo não precisa rodar na mesma máquina do modelo; em produção, a máquina com o Ollama é acessada pela rede privada (Tailscale).
-- **Docker**: Redis (fila) e PostgreSQL + pgvector (base de checagens, ainda não integrada). O Ollama roda nativo, com acesso direto à GPU.
+- **Docker**: Redis (fila) e PostgreSQL + pgvector local (base de checagens; em produção, Neon). O Ollama roda nativo, com acesso direto à GPU.
 
 ### O que a resposta traz
 
@@ -52,13 +52,17 @@ app/
 ├── rag/              # busca de evidências, seleção de trechos e síntese da tutora
 ├── prompts/          # prompts versionados
 ├── main.py           # FastAPI (endpoints de teste; não usado pelo fluxo do WhatsApp)
-├── db/, search/      # esqueletos: base de checagens (pgvector) e provedores de busca
+├── db/              # acesso ao PostgreSQL + pgvector (base de checagens)
+├── ingestao/        # scripts que preenchem a base de checagens
+├── search/          # esqueleto: provedores de busca
 └── telegram/         # esqueleto antigo, do canal descartado
 
 conectores/whatsapp/  # conector de WhatsApp Web (Playwright)
+migrations/           # migrações do banco (Alembic)
 
 tests/
 ├── guardrails/, rag/, graph/   # testes unitários (sem rede e sem LLM)
+├── db/                         # migrações num Postgres de teste (TEST_DATABASE_URL)
 ├── dataset/, eval/             # esqueletos de dataset e avaliação
 ```
 
@@ -93,6 +97,42 @@ python -m conectores.whatsapp.src.main
 - Uma análise leva cerca de 20 a 30 s com o Qwen 7B numa GPU local. Recusas dos guardrails são imediatas.
 - Se o Ollama não responder, o usuário recebe uma mensagem de indisponibilidade.
 
+### Banco de dados
+
+O esquema da base de checagens (extensão `vector`, tabelas `documentos`, `trechos` e `boatos_conhecidos`, índices HNSW e de texto em português) é criado por migrações do [Alembic](https://alembic.sqlalchemy.org), em `migrations/versions/`. Para aplicar no banco de `DATABASE_URL`:
+
+```bash
+docker compose up -d db   # local; em produção, a URL aponta para o Neon
+alembic upgrade head
+```
+
+Mudanças no esquema entram sempre como uma nova migração, nunca alterando o banco à mão.
+
+O serviço `db` usa o PostgreSQL 17, a mesma versão do Neon. Um volume criado por outra versão impede o container de subir (`database files are incompatible with server`); se o banco local não tiver nada a preservar, recrie-o com `docker compose down -v`.
+
+### Base de checagens
+
+A base é preenchida por scripts de ingestão em `app/ingestao/`, idempotentes: rodar de novo só processa páginas que ainda não estão no banco, e um documento só ganha novos embeddings quando o texto muda. Os embeddings usam o `intfloat/multilingual-e5-base` em CPU (cerca de 1,5 GB de RAM, 40 ms por consulta), baixado do Hugging Face na primeira execução.
+
+**FakeTrue.Br** (`app/ingestao/faketrue.py`): baixa de novo as páginas das checagens, das notícias e do Boatos.org pelas URLs do corpus, porque o texto do corpus vem sem maiúsculas, sem título e sem data; o texto do corpus só é usado quando a página não pode ser lida. Respeita o `robots.txt` de cada site. O texto de cada boato vai para `boatos_conhecidos`, ligado à sua página no Boatos.org; os boatos do golden set ficam de fora, para não contaminar a avaliação.
+
+```bash
+python -m app.ingestao.faketrue \
+  --corpus ../experimentos/data/raw/FakeTrue.Br/FakeTrueBr_corpus.csv \
+  --golden-set ../experimentos/data/processed/golden_set_v1.jsonl
+```
+
+`--limite N` processa só os N primeiros pares (teste) e `--sem-download` usa apenas o texto do corpus.
+
+Páginas que hoje levam a outro conteúdo (redirecionamento para a página inicial do site, galerias de fotos) são recusadas, e o documento fica com o texto do corpus. `--atualizar --url <URL>` refaz documentos específicos.
+
+**Auditoria** (`app/ingestao/auditoria.py`): lista documentos cujo texto talvez não seja a matéria da URL (endereço sem relação com o título e o texto, anos citados muito depois da publicação, galerias), para revisão manual. `--corrigir-metadados` reaplica as regras atuais de agência, natureza e título sem recalcular embeddings, por exemplo depois de incluir uma agência em `AGENCIAS_CHECAGEM`.
+
+```bash
+python -m app.ingestao.auditoria
+python -m app.ingestao.auditoria --corrigir-metadados
+```
+
 ### Testar o núcleo sem WhatsApp
 
 ```python
@@ -112,7 +152,7 @@ print(r.resposta_texto)
 | `LLM_TIMEOUT_S` | `180` | Tempo máximo de uma chamada ao LLM |
 | `REDIS_URL` | `redis://localhost:6379/0` | Fila ARQ |
 | `GUARDRAILS_NEMO` | `1` | `0` desliga a etapa do NeMo (fica só a verificação por padrões) |
-| `DATABASE_URL` | vazio | PostgreSQL + pgvector (ainda não usado) |
+| `DATABASE_URL` | vazio | PostgreSQL + pgvector (Neon em produção) |
 
 As variáveis do conector estão no README dele.
 
@@ -123,6 +163,13 @@ GUARDRAILS_NEMO=0 python -m pytest tests conectores/whatsapp/tests
 ```
 
 Os testes usam LLM, busca, fila e página falsos. Os testes de integração com o Qwen rodam só se o Ollama estiver no ar.
+
+Os testes de migração rodam só com `TEST_DATABASE_URL`, porque apagam e recriam o esquema; use um banco descartável, nunca o de produção:
+
+```bash
+docker compose up -d db
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/challenge1 python -m pytest tests/db
+```
 
 ## Estado e próximos passos
 

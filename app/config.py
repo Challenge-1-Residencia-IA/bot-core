@@ -18,3 +18,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # Banco Postgres + pgvector (Neon em produção). Vazio = recursos que dependem do banco ficam desligados.
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+# Modelo de embedding da base de checagens (roda em CPU, na mesma máquina do núcleo). Trocar o modelo
+# exige reindexar a base; a dimensão do vetor está fixada na migração do banco.
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-base")

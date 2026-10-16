@@ -1,0 +1,11 @@
+[Unit]
+Description=Atualiza a base de checagens a cada hora
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=5min
+Unit=bot-coletor.service
+
+[Install]
+WantedBy=timers.target
