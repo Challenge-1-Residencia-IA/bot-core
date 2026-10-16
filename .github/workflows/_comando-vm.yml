@@ -1,0 +1,91 @@
+name: Comando na VM
+
+# Workflow reutilizável: entra na tailnet como máquina temporária (tag:ci, que só alcança a VM na porta
+# 22) e envia um comando ao comando forçado da chave do deploy (deploy/comando_ssh.sh), que só aceita
+# implantar, reverter e listar. O log e as notas do portão vão para o resumo do job.
+
+on:
+  workflow_call:
+    inputs:
+      comando:
+        description: "implantar <commit> | reverter anterior|campea|<commit>"
+        required: true
+        type: string
+    secrets:
+      TS_OAUTH_CLIENT_ID:
+        required: true
+      TS_OAUTH_SECRET:
+        required: true
+      DEPLOY_SSH_KEY:
+        required: true
+      DEPLOY_SSH_KNOWN_HOSTS:
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  VM: ubuntu@100.75.117.66
+
+jobs:
+  vm:
+    name: ${{ inputs.comando }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: producao
+    steps:
+      - name: Entrar na tailnet (tag:ci)
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Configurar a chave do deploy
+        env:
+          CHAVE: ${{ secrets.DEPLOY_SSH_KEY }}
+          CONHECIDOS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$CHAVE" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$CONHECIDOS" > ~/.ssh/known_hosts
+
+      - name: Executar na VM
+        env:
+          COMANDO: ${{ inputs.comando }}
+        run: |
+          set -o pipefail
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              -o ServerAliveInterval=30 "$VM" "$COMANDO" 2>&1 \
+            | grep -v -e "Warning: You are sending unauthenticated" -e "Loading weights" | tee saida.log
+
+      - name: Resumo
+        if: always()
+        env:
+          COMANDO: ${{ inputs.comando }}
+        run: |
+          {
+            echo "## \`$COMANDO\`"
+            echo
+            if grep -q "Portão (" saida.log 2>/dev/null; then
+              echo "### Portão de avaliação"
+              echo
+              echo '```'
+              grep -E "Métricas da (release nova|campeã)|Portão \(" saida.log | sed -E 's/^\[[0-9:]+\] //'
+              echo '```'
+              echo
+            fi
+            echo "### Log"
+            echo
+            echo '```'
+            cat saida.log 2>/dev/null || echo "(sem saída)"
+            echo '```'
+            echo
+            echo "### Releases"
+            echo
+            echo '```'
+            ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o BatchMode=yes "$VM" listar 2>&1 | tail -n 14 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f ~/.ssh/deploy

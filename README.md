@@ -176,10 +176,29 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/challenge1 pytho
 
 O workflow `.github/workflows/ci.yml` roda em todo pull request e em todo push na `main`: o lint (`ruff`) e a suíte completa, incluindo os testes de banco, contra um Postgres com pgvector descartável. Os dois jobs são obrigatórios para o merge na `main`.
 
+### Deploy contínuo
+
+Todo merge na `main` com o CI verde é implantado sozinho na VM de produção:
+
+```
+merge na main → CI (lint + testes) → Deploy (.github/workflows/deploy.yml)
+                                       └─ entra na tailnet como máquina temporária (tag:ci, só SSH na VM)
+                                       └─ ssh → deploy/comando_ssh.sh → deploy/implantar.sh <commit>
+                                            release nova → migrações → preflight
+                                            → portão: avaliação da busca com o golden set, comparada com a campeã
+                                            → troca do link → reinício → teste de fumaça (ou volta sozinho)
+```
+
+- **Acompanhar:** aba **Actions** → Deploy. O resumo de cada execução mostra as notas do portão, o log e a lista de releases. O ambiente `producao` (aba Deployments) mostra o histórico. As notas também vão para o MLflow do DagsHub (experimento `bot-core-deploy`).
+- **Voltar uma versão:** Actions → **Reverter** → Run workflow, com o alvo `campea` (a última aprovada pelo portão), `anterior` ou um commit.
+- **Implantar de novo à mão:** Actions → Deploy → Run workflow (vazio = commit mais recente da `main`).
+
+Segredos usados (Settings → Secrets → Actions): `TS_OAUTH_CLIENT_ID` e `TS_OAUTH_SECRET` (cliente OAuth do Tailscale com escopo `auth_keys` e tag `tag:ci`), `DEPLOY_SSH_KEY` (chave autorizada na VM só para o comando forçado) e `DEPLOY_SSH_KNOWN_HOSTS` (chave pública do servidor SSH da VM). Os detalhes da VM estão em [`deploy/systemd/README.md`](deploy/systemd/README.md).
+
 ## Estado e próximos passos
 
 - Funciona localmente de ponta a ponta: WhatsApp → fila → grafo com Qwen e busca na web → resposta.
-- Pendentes: aviso de "analisando" para o usuário enquanto a resposta é gerada; deploy contínuo na VM com portão de avaliação; monitoramento das análises em produção.
+- Pendentes: aviso de "analisando" para o usuário enquanto a resposta é gerada; monitoramento das análises em produção (Langfuse).
 - O conector depende da estrutura da página do WhatsApp Web, que muda sem aviso. Quando ele deixar de ver mensagens, comece pelos seletores em `conectores/whatsapp/src/utils/playwright_utils.py`.
 
 ## Modelos e dados
