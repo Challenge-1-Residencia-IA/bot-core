@@ -47,6 +47,7 @@ def guardrail_saida(state: EstadoAnalise) -> dict:
     dados = [NOMES_DADOS_PESSOAIS[s.split(":", 1)[1]] for s in sinais if s.startswith("dados_pessoais:")]
     if dados:
         avisos.append(AVISO_DADOS_PESSOAIS.format(tipos=", ".join(dados)))
+    avisos += [a for a in state.get("avisos", []) if a not in avisos]
     if avisos:
         texto += "\n\n" + "\n".join(f"⚠️ {aviso}" for aviso in avisos)
     return {"resposta_texto": texto, "saida": registro}

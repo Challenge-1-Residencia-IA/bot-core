@@ -20,6 +20,10 @@ class EstadoAnalise(TypedDict, total=False):
 
     # Busca e síntese
     evidencias: list
+    busca: dict
+    """Como a busca decidiu: {"checagem_mais_recente": "AAAA-MM-DD" | None, "web": bool, "motivo_web": str | None}"""
+    avisos: list
+    """Avisos acrescentados ao fim da resposta pelo guardrail de saída (ex.: checagem antiga)."""
     sintese: dict
 
     # Saída

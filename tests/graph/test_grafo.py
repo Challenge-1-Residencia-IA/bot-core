@@ -14,6 +14,8 @@ from app.rag.sintese import Citacao, RespostaTutora, Tecnica
 @pytest.fixture(autouse=True)
 def sem_nemo(monkeypatch):
     monkeypatch.setenv("GUARDRAILS_NEMO", "0")
+    # Sem banco: os testes do grafo não dependem do .env de quem roda.
+    monkeypatch.setattr(busca.app_config, "DATABASE_URL", "")
 
 
 @pytest.fixture
@@ -42,7 +44,7 @@ def pipeline_falso(monkeypatch):
             fontes=evidencias)
 
     monkeypatch.setattr(extracao.llm, "gerar_json", gerar_json)
-    monkeypatch.setattr(busca, "buscar", buscar)
+    monkeypatch.setattr(busca, "buscar_na_web", buscar)
     monkeypatch.setattr(sintese, "sintetizar", sintetizar)
     return chamadas
 
@@ -99,7 +101,7 @@ def test_fontes_sem_nenhum_termo_da_afirmacao_sao_descartadas(pipeline_falso, mo
                 Evidencia(url="https://b.org/chip", titulo="Chip em vacina é boato", dominio="b.org",
                           trecho="Não há chip", tipo="web")]
 
-    monkeypatch.setattr(busca, "buscar", buscar)
+    monkeypatch.setattr(busca, "buscar_na_web", buscar)
     resultado = analisar(pedido("URGENTE: a vacina tem chip"), construir_grafo())
     assert resultado.detalhes["fontes"] == ["https://b.org/chip"]
 
