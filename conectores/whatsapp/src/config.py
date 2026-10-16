@@ -99,6 +99,12 @@ if CONFIG["modo_acesso"] not in MODOS_ACESSO:
     raise ValueError(f"modo_acesso deve ser um de {MODOS_ACESSO}")
 for _chave, _padrao in PADROES_MODO_ABERTO.items():
     CONFIG.setdefault(_chave, _padrao)
+for _chave in ("sessoes_max_ativas", "sessao_inatividade_s", "pendentes_max_por_chat", "analises_simultaneas"):
+    _valor = os.getenv("WHATSAPP_" + _chave.upper())
+    if _valor is not None:
+        CONFIG[_chave] = int(_valor)
+    if int(CONFIG[_chave]) < 1:
+        raise ValueError(f"{_chave} deve ser positivo")
 CONFIG.setdefault("limite_resposta_chars", 12000)
 CONFIG.setdefault(
     "mensagem_midia",

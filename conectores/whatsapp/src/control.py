@@ -32,7 +32,7 @@ async def monitor_pause_input():
         # ``asyncio.to_thread`` runs the blocking ``readline`` in a thread.
         line = await asyncio.to_thread(sys.stdin.readline)
         if not line:
-            continue
+            return
         cmd = line.strip().lower()
         if cmd == "p":
             _toggle_pause()

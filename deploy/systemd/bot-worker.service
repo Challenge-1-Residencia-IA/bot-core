@@ -1,0 +1,21 @@
+[Unit]
+Description=Worker de analises do bot
+After=network-online.target redis-server.service
+Wants=network-online.target
+Requires=redis-server.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/bot-core-current
+EnvironmentFile=/home/ubuntu/bot-core-runtime/worker.env
+ExecStartPre=/home/ubuntu/bot-core-runtime/.venv/bin/python -m deploy.preflight
+ExecStart=/home/ubuntu/bot-core-runtime/.venv/bin/arq app.worker.WorkerSettings
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=330
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

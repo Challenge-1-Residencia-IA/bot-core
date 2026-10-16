@@ -21,6 +21,8 @@ messages, these selectors are the first thing to check.
 """
 
 import asyncio
+import logging
+import re
 import time
 from pathlib import Path
 from typing import List, Dict, Optional, Union
@@ -116,6 +118,32 @@ async def obter_nome_chat_ativo(page: Page) -> Optional[str]:
     return await page.evaluate(_JS_NOME_CHAT_ATIVO)
 
 
+BOTOES_FECHAR_DIALOGO = ("Fechar", "Continuar", "OK", "Entendi", "Agora não", "Close", "Continue", "Got it", "Not now")
+
+
+async def fechar_dialogos(page: Page) -> int:
+    """Dismiss modal dialogs (e.g. "Novidades do WhatsApp Web" after a new login).
+
+    A modal covers the chat list and every click on a chat times out. Escape
+    closes the usual ones; if a dialog survives it, the first close/acknowledge
+    button is clicked. Returns how many dialogs were open.
+    """
+    dialogos = page.locator('[role="dialog"]')
+    abertos = await dialogos.count()
+    if not abertos:
+        return 0
+    await page.keyboard.press("Escape")
+    await asyncio.sleep(0.3)
+    if await dialogos.count():
+        for nome in BOTOES_FECHAR_DIALOGO:
+            botao = dialogos.first.get_by_role("button", name=nome, exact=True)
+            if await botao.count():
+                await botao.first.click(timeout=3000)
+                break
+    logging.info("🪟 Diálogo do WhatsApp Web fechado")
+    return abertos
+
+
 async def abrir_chat_por_nome(page: Page, chat_nome: str) -> bool:
     """Open the chat whose title is exactly ``chat_nome``.
 
@@ -123,6 +151,7 @@ async def abrir_chat_por_nome(page: Page, chat_nome: str) -> bool:
     is not used, so a partial match can never open the wrong chat. Returns
     ``True`` only when ``#main`` shows that chat.
     """
+    await fechar_dialogos(page)
     if await obter_nome_chat_ativo(page) == chat_nome:
         return True
     candidatos = page.locator("#pane-side").get_by_title(chat_nome, exact=True)
@@ -176,11 +205,28 @@ async def chat_eh_grupo(page: Page) -> bool:
 # ---------------------------------------------------------------------------
 # Message handling helpers
 # ---------------------------------------------------------------------------
-_JS_ENVIO_CONFIRMADO = "({antes, texto}) => {" + _JS_LINHAS + """
-  const norm = t => t.replace(/\\s+/g, ' ').trim();
-  return linhas().some(l => l.saida && !antes.includes(l.id) && norm(l.texto) === norm(texto)
-    && l.status.some(st => !['pendente', 'pending'].includes(st)));
+_JS_ENVIADAS_NOVAS = "(antes) => {" + _JS_LINHAS + """
+  return linhas().filter(l => l.saida && !antes.includes(l.id)
+    && l.status.some(st => !['pendente', 'pending'].includes(st))).map(l => l.texto);
 }"""
+
+_FORMATACAO = re.compile(r"[*_~`•]")
+_MARCADOR_LISTA = re.compile(r"(?m)^\s*(\d+[.)]|[-–])\s+")
+
+
+def texto_comparavel(texto: str) -> str:
+    """Text as WhatsApp renders it, for comparing a sent message with what is on screen.
+
+    WhatsApp hides the formatting marks (``*bold*``, ``_italic_``), turns
+    ``•``/``1.`` lines into native lists and may repeat the text in the DOM, so
+    marks, list markers and all whitespace are dropped and the caller checks containment.
+    """
+    return re.sub(r"\s+", "", _FORMATACAO.sub("", _MARCADOR_LISTA.sub("", texto or ""))).casefold()
+
+
+def envio_confirmado(texto: str, enviadas: List[str]) -> bool:
+    esperado = texto_comparavel(texto)
+    return bool(esperado) and any(esperado in texto_comparavel(t) for t in enviadas)
 
 
 async def enviar_mensagem(page: Page, texto: str, chat_nome: Optional[str] = None,
@@ -204,7 +250,7 @@ async def enviar_mensagem(page: Page, texto: str, chat_nome: Optional[str] = Non
     await editor.press("Enter")
     limite = time.monotonic() + timeout_confirmacao
     while time.monotonic() < limite:
-        if await page.evaluate(_JS_ENVIO_CONFIRMADO, {"antes": antes, "texto": texto}):
+        if envio_confirmado(texto, await page.evaluate(_JS_ENVIADAS_NOVAS, antes)):
             return
         await asyncio.sleep(0.4)
     raise RuntimeError("envio_nao_confirmado")
