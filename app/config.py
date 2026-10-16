@@ -17,7 +17,7 @@ def _servidores_ollama() -> list[tuple[str, str]]:
     """Servidores do Ollama em ordem de preferência, como (url, modelo).
 
     `OLLAMA_URLS` lista vários servidores separados por vírgula; cada um pode trazer o próprio nome de
-    modelo depois de `#` (ex.: `http://100.80.160.24:11434#qwen2.5:latest,http://100.122.1.92:11434`).
+    modelo depois de `#` (ex.: `http://pc-principal.internal:11434#qwen2.5:latest,http://mac-reserva.internal:11434`).
     Sem `OLLAMA_URLS`, vale só `OLLAMA_URL` com `OLLAMA_MODEL`.
     """
     servidores = []
