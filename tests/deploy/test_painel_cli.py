@@ -66,3 +66,25 @@ def test_tela_mostra_estado_sessoes_analises_e_comandos(monkeypatch):
 def test_tela_avisa_quando_o_conector_nao_publica(monkeypatch):
     monkeypatch.setattr(painel, "servicos", lambda: {"bot-worker": "active", "bot-conector": "failed"})
     assert "CONECTOR SEM SINAL" in painel.tela(RedisFalso({}, {}), [], 0)
+
+
+def test_processar_tecla_edita_e_entrega_a_linha_no_enter():
+    buffer = ""
+    for tecla in "limite 33":
+        buffer, linha = painel.processar_tecla(buffer, tecla)
+        assert linha is None
+    buffer, _ = painel.processar_tecla(buffer, "\x7f")  # backspace
+    buffer, linha = painel.processar_tecla(buffer, "\n")
+    assert (buffer, linha) == ("", "limite 3")
+    assert painel.processar_tecla("abc", "\x15") == ("", None)  # Ctrl+U
+    assert painel.processar_tecla("abc", "\x1b") == ("abc", None)  # teclas especiais são ignoradas
+
+
+def test_executar_linha_aceita_com_ou_sem_painel_e_avisa_comando_invalido(monkeypatch):
+    enviados = []
+    monkeypatch.setattr(painel, "enviar_e_esperar", lambda r, c: enviados.append(c) or "ok")
+    assert painel.executar_linha(None, "painel limite 3") == "ok"
+    assert painel.executar_linha(None, "pausar") == "ok"
+    assert enviados == [{"acao": "limite", "valor": 3}, {"acao": "pausar"}]
+    assert painel.executar_linha(None, "explodir").startswith("comando inválido")
+    assert painel.executar_linha(None, "") == ""
