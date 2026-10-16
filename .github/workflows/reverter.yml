@@ -1,0 +1,49 @@
+name: Reverter
+
+# Volta a VM para uma release que ainda está no disco: a anterior, a campeã (última aprovada pelo portão)
+# ou um commit específico. Rodar pela aba Actions → Reverter → Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      alvo:
+        description: "Para onde voltar"
+        type: choice
+        options: [campea, anterior, commit]
+        default: campea
+      commit:
+        description: "Commit (só quando o alvo for 'commit'; ver a lista de releases no resumo de um deploy)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-producao
+  cancel-in-progress: false
+
+jobs:
+  alvo:
+    name: Validar o alvo
+    runs-on: ubuntu-24.04
+    outputs:
+      alvo: ${{ steps.alvo.outputs.alvo }}
+    steps:
+      - id: alvo
+        env:
+          ALVO: ${{ inputs.alvo }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          if [[ "$ALVO" == commit ]]; then
+            [[ "$COMMIT" =~ ^[0-9a-f]{7,40}$ ]] || { echo "informe um commit válido"; exit 1; }
+            ALVO="$COMMIT"
+          fi
+          echo "alvo=$ALVO" >> "$GITHUB_OUTPUT"
+
+  reverter:
+    needs: alvo
+    uses: ./.github/workflows/_comando-vm.yml
+    with:
+      comando: reverter ${{ needs.alvo.outputs.alvo }}
+    secrets: inherit

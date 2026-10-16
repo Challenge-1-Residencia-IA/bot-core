@@ -1,0 +1,52 @@
+name: Deploy
+
+# Implanta na VM cada commit da main depois que o CI dele passa. O deploy roda o portão de avaliação
+# (champion/challenger) e volta sozinho se a verificação falhar; ver deploy/systemd/README.md.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "Commit da main a implantar (vazio = o mais recente)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+# Um deploy por vez; os seguintes esperam na fila em vez de cancelar o que está rodando.
+concurrency:
+  group: deploy-producao
+  cancel-in-progress: false
+
+jobs:
+  commit:
+    name: Escolher o commit
+    # Só depois de um CI verde de push na main (não de pull request), ou quando pedido à mão.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - id: sha
+        env:
+          DO_CI: ${{ github.event.workflow_run.head_sha }}
+          PEDIDO: ${{ inputs.commit }}
+          MAIN: ${{ github.sha }}
+        run: |
+          sha="${DO_CI:-${PEDIDO:-$MAIN}}"
+          [[ "$sha" =~ ^[0-9a-f]{7,40}$ ]] || { echo "commit inválido: $sha"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  implantar:
+    needs: commit
+    uses: ./.github/workflows/_comando-vm.yml
+    with:
+      comando: implantar ${{ needs.commit.outputs.sha }}
+    secrets: inherit
