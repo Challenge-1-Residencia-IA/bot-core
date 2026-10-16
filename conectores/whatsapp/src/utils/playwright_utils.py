@@ -21,6 +21,7 @@ messages, these selectors are the first thing to check.
 """
 
 import asyncio
+import logging
 import time
 from pathlib import Path
 from typing import List, Dict, Optional, Union
@@ -116,6 +117,32 @@ async def obter_nome_chat_ativo(page: Page) -> Optional[str]:
     return await page.evaluate(_JS_NOME_CHAT_ATIVO)
 
 
+BOTOES_FECHAR_DIALOGO = ("Fechar", "Continuar", "OK", "Entendi", "Agora não", "Close", "Continue", "Got it", "Not now")
+
+
+async def fechar_dialogos(page: Page) -> int:
+    """Dismiss modal dialogs (e.g. "Novidades do WhatsApp Web" after a new login).
+
+    A modal covers the chat list and every click on a chat times out. Escape
+    closes the usual ones; if a dialog survives it, the first close/acknowledge
+    button is clicked. Returns how many dialogs were open.
+    """
+    dialogos = page.locator('[role="dialog"]')
+    abertos = await dialogos.count()
+    if not abertos:
+        return 0
+    await page.keyboard.press("Escape")
+    await asyncio.sleep(0.3)
+    if await dialogos.count():
+        for nome in BOTOES_FECHAR_DIALOGO:
+            botao = dialogos.first.get_by_role("button", name=nome, exact=True)
+            if await botao.count():
+                await botao.first.click(timeout=3000)
+                break
+    logging.info("🪟 Diálogo do WhatsApp Web fechado")
+    return abertos
+
+
 async def abrir_chat_por_nome(page: Page, chat_nome: str) -> bool:
     """Open the chat whose title is exactly ``chat_nome``.
 
@@ -123,6 +150,7 @@ async def abrir_chat_por_nome(page: Page, chat_nome: str) -> bool:
     is not used, so a partial match can never open the wrong chat. Returns
     ``True`` only when ``#main`` shows that chat.
     """
+    await fechar_dialogos(page)
     if await obter_nome_chat_ativo(page) == chat_nome:
         return True
     candidatos = page.locator("#pane-side").get_by_title(chat_nome, exact=True)
