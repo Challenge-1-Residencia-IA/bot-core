@@ -10,7 +10,7 @@ scanner (after the core's ARQ job finishes) and consumed by the dispatcher.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 
 @dataclass

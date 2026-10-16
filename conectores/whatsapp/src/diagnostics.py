@@ -52,7 +52,6 @@ def log_debug(msg: str, *args: Any, **kwargs: Any) -> None:
 # Optional health‑check HTTP server (runs only in debug mode).
 # ---------------------------------------------------------------------------
 if DEBUG_MODE:
-    import asyncio
     from aiohttp import web
 
     async def _health_handler(request: web.Request) -> web.Response:

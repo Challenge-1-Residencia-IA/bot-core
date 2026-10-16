@@ -159,7 +159,8 @@ As variáveis do conector estão no README dele.
 ## Testes
 
 ```bash
-GUARDRAILS_NEMO=0 python -m pytest tests conectores/whatsapp/tests
+GUARDRAILS_NEMO=0 python -m pytest   # pastas definidas em pyproject.toml
+ruff check .                          # lint (pip install ruff)
 ```
 
 Os testes usam LLM, busca, fila e página falsos. Os testes de integração com o Qwen rodam só se o Ollama estiver no ar.
@@ -171,10 +172,14 @@ docker compose up -d db
 TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/challenge1 python -m pytest tests/db
 ```
 
+### Integração contínua
+
+O workflow `.github/workflows/ci.yml` roda em todo pull request e em todo push na `main`: o lint (`ruff`) e a suíte completa, incluindo os testes de banco, contra um Postgres com pgvector descartável. Os dois jobs são obrigatórios para o merge na `main`.
+
 ## Estado e próximos passos
 
 - Funciona localmente de ponta a ponta: WhatsApp → fila → grafo com Qwen e busca na web → resposta.
-- Pendentes: aviso de "analisando" para o usuário enquanto a resposta é gerada; base de checagens no pgvector; medição com o golden set (repositório `experimentos`); Dockerfiles, CI e deploy na nuvem.
+- Pendentes: aviso de "analisando" para o usuário enquanto a resposta é gerada; deploy contínuo na VM com portão de avaliação; monitoramento das análises em produção.
 - O conector depende da estrutura da página do WhatsApp Web, que muda sem aviso. Quando ele deixar de ver mensagens, comece pelos seletores em `conectores/whatsapp/src/utils/playwright_utils.py`.
 
 ## Modelos e dados

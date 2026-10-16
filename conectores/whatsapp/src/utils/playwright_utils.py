@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
+from playwright.async_api import Browser, BrowserContext, Page
 
 USER_AGENT_CHROME = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
                      "Chrome/156.0.0.0 Safari/537.36")

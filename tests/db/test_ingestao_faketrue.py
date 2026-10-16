@@ -47,7 +47,7 @@ def _paginas_falsas(monkeypatch, falham=()):
     monkeypatch.setattr(faketrue, "permitido_por_robots", lambda url: True)
 
 
-def _rodar(conexao, arquivos, **kwargs):
+def _rodar(conexao, arquivos, **kwargs):  # noqa: F811 - parâmetro com o nome da fixture
     pares = faketrue.ler_corpus(arquivos[0])
     return faketrue.ingerir(pares, faketrue.ler_golden_set(arquivos[1]), conexao=conexao, modelo=ModeloFalso(), pausa_s=0, **kwargs)
 
