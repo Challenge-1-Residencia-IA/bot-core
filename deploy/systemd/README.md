@@ -20,7 +20,7 @@ Copiar `deploy/conector.env.example` para `~/bot-core-runtime/conector.env`.
 
 Instalar as unidades desta pasta em `/etc/systemd/system` e executar
 `systemctl daemon-reload`. Ativar primeiro `redis-server` e `bot-worker`.
-O preflight do worker verifica Redis, banco e o modelo Ollama.
+O preflight do worker exige Redis e banco; se o Ollama estiver fora do ar, só avisa e o worker sobe mesmo assim (as análises respondem que o modelo está indisponível).
 
 Com o conector parado e as variáveis de `conector.env` exportadas, executar da
 release `python -m deploy.login_whatsapp`. O QR é atualizado em `WHATSAPP_QR_PATH`:
@@ -68,11 +68,12 @@ na `main`:
 1. Cria a release em `~/bot-core-releases/<commit>` a partir do espelho `~/bot-core-runtime/repo.git`.
 2. Instala as dependências no venv só quando `requirements.txt` muda.
 3. Aplica as migrações com `~/bot-core-runtime/migracao.env`, a única credencial que altera o esquema.
-4. Confere se a release importa e roda o preflight (Redis, banco e Ollama). Se algo falhar, a
-   implantação é abortada e a release no ar continua a mesma.
+4. Confere se a release importa e roda o preflight (Redis e banco obrigatórios; o Ollama só gera
+   aviso, porque roda no PC do mantenedor). Se algo falhar, a implantação é abortada e a release no ar
+   continua a mesma.
 5. Atualiza as unidades `bot-worker` e `bot-conector` que mudaram, troca o link `bot-core-current` de
    forma atômica e reinicia os dois serviços.
-6. Confere se os serviços ficaram ativos e roda o teste de fumaça (`deploy/fumaca.py`): uma
+6. Espera até 90 s os serviços ficarem ativos (o systemd tenta de novo a cada 15 s) e roda o teste de fumaça (`deploy/fumaca.py`): uma
    saudação enviada pela fila, que o worker responde sem LLM. Se falhar, volta sozinho para a release
    anterior.
 7. Mantém as 5 releases mais recentes, além da atual e da anterior.

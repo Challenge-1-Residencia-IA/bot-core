@@ -67,3 +67,10 @@ def test_listar_marca_a_release_no_ar_e_mostra_metricas(releases):
 def test_status_invalido_e_recusado(releases):
     with pytest.raises(ValueError):
         releases.registrar("a" * 40, "qualquer")
+
+
+def test_anterior_inclui_release_colocada_no_ar_antes_do_registro(releases):
+    no_disco(releases, "aaaaaaa", "bbbbbbb")
+    releases.registrar("bbbbbbb" + "0" * 33, "implantada", anterior="aaaaaaa")
+    colocar_no_ar(releases, "bbbbbbb")
+    assert releases.anterior() == "aaaaaaa"

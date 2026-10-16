@@ -44,10 +44,14 @@ def gerar_json(sistema: str, usuario: str, esquema: dict, *, max_tokens: int = 7
         raise ValueError("O modelo não devolveu um JSON válido") from erro
 
 
-def disponivel() -> bool:
-    """Confere se o Ollama responde e se o modelo configurado está instalado."""
+def disponivel(timeout: float = 15) -> bool:
+    """Confere se o Ollama responde e se o modelo configurado está instalado.
+
+    O limite de 15 s cobre o caso em que a VM fala com o PC por um relay do Tailscale (DERP), em que a
+    listagem de modelos chega a levar alguns segundos.
+    """
     try:
-        tags = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=5).json().get("models", [])
+        tags = requests.get(f"{config.OLLAMA_URL}/api/tags", timeout=timeout).json().get("models", [])
     except (requests.RequestException, ValueError):
         return False
     return any(config.OLLAMA_MODEL in (m.get("name"), m.get("model")) for m in tags)

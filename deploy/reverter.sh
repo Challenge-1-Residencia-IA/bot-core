@@ -40,9 +40,12 @@ SHA="$(sed -n 's/^commit \([0-9a-f]*\).*/\1/p' "$DESTINO/RELEASE")"
 log "Voltando de $(basename "$ATUAL_DIR") para $RELEASE"
 ln -sfn "$DESTINO" "$ATUAL.novo" && mv -T "$ATUAL.novo" "$ATUAL"
 sudo systemctl restart "${UNIDADES[@]}"
-sleep 15
-for unidade in "${UNIDADES[@]}"; do
-    systemctl is-active --quiet "$unidade" || falhar "$unidade não subiu; conferir journalctl -u $unidade"
+INICIO=$SECONDS
+for unidade in "${UNIDADES[@]}"; do  # até 90 s: o systemd tenta de novo a cada 15 s se a partida falhar
+    until systemctl is-active --quiet "$unidade"; do
+        (( SECONDS - INICIO < 90 )) || falhar "$unidade não subiu em 90 s; conferir journalctl -u $unidade"
+        sleep 3
+    done
 done
 # shellcheck source=/dev/null
 (set -a; . "$RUNTIME/worker.env"; set +a; cd "$ATUAL" && PYTHONPATH="$ATUAL" "$PY" "$RUNTIME/bin/fumaca.py" --timeout 300) \

@@ -89,7 +89,7 @@ log "Conferindo a release e as dependências externas"
 com_ambiente "$RUNTIME/worker.env" "$PY" -c "import app.worker, conectores.whatsapp.src.main" \
     || abortar "a release não importa"
 com_ambiente "$RUNTIME/worker.env" "$PY" -m deploy.preflight \
-    || abortar "Redis, banco ou Ollama indisponível"
+    || abortar "Redis ou banco indisponível"
 
 # 5. Unidades do systemd que mudaram -----------------------------------------------------------------
 RECARREGAR=0
@@ -105,12 +105,23 @@ done
 # 6. Troca e verificação -----------------------------------------------------------------------------
 apontar() { ln -sfn "$1" "$ATUAL.novo" && mv -T "$ATUAL.novo" "$ATUAL"; }
 
+aguardar_ativos() {  # espera até 90 s: o systemd tenta de novo a cada 15 s se a partida falhar
+    local unidade inicio=$SECONDS
+    for unidade in "${UNIDADES[@]}"; do
+        until systemctl is-active --quiet "$unidade"; do
+            (( SECONDS - inicio < 90 )) || { log "$unidade não ficou ativo em 90 s"; return 1; }
+            sleep 3
+        done
+    done
+    sleep 5
+    for unidade in "${UNIDADES[@]}"; do  # continua ativo depois de alguns segundos (não caiu na partida)
+        systemctl is-active --quiet "$unidade" || { log "$unidade caiu logo depois de subir"; return 1; }
+    done
+}
+
 verificar() {
     sudo systemctl restart "${UNIDADES[@]}"
-    sleep 15
-    for unidade in "${UNIDADES[@]}"; do
-        systemctl is-active --quiet "$unidade" || { log "$unidade não está ativo"; return 1; }
-    done
+    aguardar_ativos || return 1
     # shellcheck source=/dev/null
     (set -a; . "$RUNTIME/worker.env"; set +a; cd "$ATUAL" && PYTHONPATH="$ATUAL" "$PY" "$RUNTIME/bin/fumaca.py" --timeout 300)
 }

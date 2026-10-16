@@ -50,7 +50,12 @@ def no_ar() -> str:
 def anterior() -> str:
     """Release que esteve no ar antes da atual e ainda existe no disco ("" se não houver)."""
     atual = no_ar()
-    no_ar_antes = [e["release"] for e in ler() if e["status"] in ("implantada", "reversao_manual")]
+    # Cada troca registra a release que saiu ("anterior") e a que entrou; a que saiu conta mesmo que
+    # tenha sido colocada no ar antes de o registro existir.
+    no_ar_antes = []
+    for e in ler():
+        if e["status"] in ("implantada", "reversao_manual"):
+            no_ar_antes += [e["anterior"], e["release"]] if e["anterior"] else [e["release"]]
     for release in reversed(no_ar_antes):
         if release != atual and (RELEASES / release).is_dir():
             return release
