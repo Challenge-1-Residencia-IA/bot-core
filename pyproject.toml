@@ -1,0 +1,20 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [
+    ".venv-*",
+    # Legado do bot-test (versão monolítica com Groq), mantido só como referência.
+    "conectores/whatsapp/botfinal.py",
+    "conectores/whatsapp/database.py",
+    "conectores/whatsapp/test_database.py",
+    "conectores/whatsapp/test_click.py",
+    "conectores/whatsapp/inspecionar.py",
+    "conectores/whatsapp/ver_banco.py",
+]
+
+[tool.ruff.lint]
+# Erros de sintaxe e os do Pyflakes (nomes indefinidos, imports e variáveis sem uso, redefinições).
+select = ["E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "conectores/whatsapp/tests"]

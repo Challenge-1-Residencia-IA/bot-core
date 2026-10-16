@@ -30,5 +30,5 @@ def analisar(payload: AnaliseRequest) -> AnaliseResponse:
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     # TODO: repassar a mensagem recebida ao grafo do LangGraph (app/graph)
-    payload = await request.json()
+    await request.json()
     return {"received": True}
