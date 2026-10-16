@@ -89,6 +89,10 @@ class Evidencia:
     lida: bool = True
     texto: str = field(default="", repr=False)
     """Texto completo extraído (até 30 mil caracteres), para nova seleção de trechos sem baixar de novo."""
+    fonte_busca: str = "web"
+    """Onde a evidência foi encontrada: `web` (buscador) ou `base` (base de checagens)."""
+    similaridade: float | None = None
+    """Similaridade de cosseno com a consulta (só para resultados da base)."""
 
     def para_dict(self, *, com_texto: bool = False) -> dict:
         dados = asdict(self)

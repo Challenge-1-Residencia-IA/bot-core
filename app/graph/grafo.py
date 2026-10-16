@@ -52,19 +52,24 @@ def grafo_padrao():
     return construir_grafo(checkpointer=InMemorySaver())
 
 
-def analisar(pedido: PedidoAnalise, grafo=None) -> ResultadoAnalise:
-    """Executa o grafo para uma mensagem e devolve o resultado no formato do contrato."""
+def analisar(pedido: PedidoAnalise, grafo=None, *, excluir_urls=()) -> ResultadoAnalise:
+    """Executa o grafo para uma mensagem e devolve o resultado no formato do contrato.
+
+    `excluir_urls` esconde documentos da base de checagens nesta análise; serve para a avaliação
+    simular checagens que não estão na base (IA-07).
+    """
     grafo = grafo or grafo_padrao()
     inicio = time.perf_counter()
     entrada = {
         "chat_id": pedido.chat_id, "mensagem_id": pedido.mensagem_id, "mensagem": pedido.texto,
         "contexto": pedido.contexto,
         # Zera o que veio da mensagem anterior da mesma conversa (o checkpointer guarda o estado).
-        "afirmacoes": [], "elementos_manipulacao": [], "evidencias": [], "sintese": {},
-        "resposta_texto": "", "saida": {},
+        "afirmacoes": [], "elementos_manipulacao": [], "evidencias": [], "busca": {}, "avisos": [],
+        "sintese": {}, "resposta_texto": "", "saida": {},
     }
     try:
-        estado = grafo.invoke(entrada, {"configurable": {"thread_id": pedido.chat_id}})
+        estado = grafo.invoke(entrada, {"configurable": {"thread_id": pedido.chat_id,
+                                                         "excluir_urls": list(excluir_urls)}})
     except LLMIndisponivel as erro:
         return ResultadoAnalise(resposta_texto=MENSAGEM_LLM_INDISPONIVEL, llm_indisponivel=True,
                                 motivo="llm_indisponivel", detalhes={"erro": str(erro)})
@@ -74,6 +79,8 @@ def analisar(pedido: PedidoAnalise, grafo=None) -> ResultadoAnalise:
         "afirmacoes": estado.get("afirmacoes", []),
         "elementos_manipulacao": estado.get("elementos_manipulacao", []),
         "fontes": [e.get("url") for e in estado.get("evidencias", []) if isinstance(e, dict)],
+        "fontes_da_base": sum(e.get("fonte_busca") == "base" for e in estado.get("evidencias", [])),
+        "busca": estado.get("busca", {}),
         "saida": estado.get("saida", {}),
         "tempo_s": round(time.perf_counter() - inicio, 2),
     }
