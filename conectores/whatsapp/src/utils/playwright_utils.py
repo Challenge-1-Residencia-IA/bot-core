@@ -24,6 +24,7 @@ import asyncio
 import logging
 import re
 import time
+import unicodedata
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 
@@ -71,13 +72,28 @@ async def fechar_navegador(browser: Union[Browser, BrowserContext]) -> None:
 # first aria label ("<name>:") or its tail icon (``tail-in``) points to the open
 # chat; outgoing rows carry a delivery status label ("Enviada", "Entregue",
 # "Lida"), "Você:" or ``tail-out``. Text inside quoted messages is ignored.
-_JS_LINHAS = """
-const STATUS = /^(enviada|entregue|lida|reproduzida|pendente|sent|delivered|read|played|pending)$/i;
+# The chat name in the header is rendered with emoji as <img alt="❤️">, so innerText drops them while the
+# title in the chat list keeps them. Names are read with the alt text and compared normalised (NFC, no
+# U+FE0F variation selector, single spaces), on both the JS and the Python side.
+_JS_NOME = """
+const normalizarNome = s => (s || '').normalize('NFC').replace(/\\uFE0F/g, '').replace(/\\s+/g, ' ').trim();
+const textoComEmoji = el => {
+  let texto = '';
+  for (const no of el.childNodes) {
+    if (no.nodeType === 3) texto += no.textContent;
+    else if (no.nodeType === 1) texto += no.tagName === 'IMG' ? (no.getAttribute('alt') || '') : textoComEmoji(no);
+  }
+  return texto;
+};
 const nomeChat = () => {
   const t = document.querySelector('#main [data-testid="conversation-info-header-chat-title-name"]')
     || document.querySelector('#main header span[title]');
-  return t ? (t.getAttribute('title') || t.innerText || '').trim() : '';
+  return t ? normalizarNome(t.getAttribute('title') || textoComEmoji(t)) : '';
 };
+"""
+
+_JS_LINHAS = _JS_NOME + """
+const STATUS = /^(enviada|entregue|lida|reproduzida|pendente|sent|delivered|read|played|pending)$/i;
 const linhas = () => {
   const main = document.querySelector('#main');
   if (!main) return [];
@@ -88,7 +104,8 @@ const linhas = () => {
     const rotulos = [...row.querySelectorAll('[aria-label]')].map(e => (e.getAttribute('aria-label') || '').trim());
     const icone = n => !!row.querySelector(`[data-icon="${n}"]`);
     const saida = rotulos.some(r => STATUS.test(r) || r === 'Você:' || r === 'You:') || icone('tail-out');
-    const entrada = !saida && (remetente === nome || rotulos.includes(nome + ':') || icone('tail-in'));
+    const entrada = !saida && (normalizarNome(remetente) === nome
+      || rotulos.some(r => normalizarNome(r) === nome + ':') || icone('tail-in'));
     const texto = [...row.querySelectorAll('.selectable-text')]
       .filter(el => !el.closest('[data-testid="quoted-message"]'))
       .map(el => el.innerText).join('\\n').trim();
@@ -103,14 +120,14 @@ const linhas = () => {
 # ---------------------------------------------------------------------------
 # Chat navigation helpers
 # ---------------------------------------------------------------------------
-_JS_NOME_CHAT_ATIVO = """() => {
-  const main = document.querySelector('#main');
-  if (!main) return null;
-  const titulo = main.querySelector('[data-testid="conversation-info-header-chat-title-name"]')
-    || main.querySelector('header span[title]');
-  if (!titulo) return null;
-  return (titulo.getAttribute('title') || titulo.innerText || '').trim() || null;
+_JS_NOME_CHAT_ATIVO = "() => {" + _JS_NOME + """
+  return nomeChat() || null;
 }"""
+
+
+def normalizar_nome(nome: Optional[str]) -> str:
+    """Mesma normalização do JS: NFC, sem o seletor de variação U+FE0F e com espaços simples."""
+    return " ".join(unicodedata.normalize("NFC", nome or "").replace("\ufe0f", "").split())
 
 
 async def obter_nome_chat_ativo(page: Page) -> Optional[str]:
@@ -152,17 +169,18 @@ async def abrir_chat_por_nome(page: Page, chat_nome: str) -> bool:
     ``True`` only when ``#main`` shows that chat.
     """
     await fechar_dialogos(page)
-    if await obter_nome_chat_ativo(page) == chat_nome:
+    alvo = normalizar_nome(chat_nome)
+    if normalizar_nome(await obter_nome_chat_ativo(page)) == alvo:
         return True
     candidatos = page.locator("#pane-side").get_by_title(chat_nome, exact=True)
     if await candidatos.count() != 1:
         return False
     await candidatos.click(timeout=3000)
     for _ in range(20):
-        if await obter_nome_chat_ativo(page) == chat_nome:
+        if normalizar_nome(await obter_nome_chat_ativo(page)) == alvo:
             # The header may switch before the message list finishes loading.
             await asyncio.sleep(0.5)
-            return await obter_nome_chat_ativo(page) == chat_nome
+            return normalizar_nome(await obter_nome_chat_ativo(page)) == alvo
         await asyncio.sleep(0.1)
     return False
 

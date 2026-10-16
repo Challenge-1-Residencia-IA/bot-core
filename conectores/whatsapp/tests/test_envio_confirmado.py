@@ -28,3 +28,11 @@ def test_nao_confirma_outra_mensagem_nem_vazio():
 
 def test_texto_comparavel_preserva_numeros_no_meio_da_frase():
     assert texto_comparavel("O Pix acima de 5 mil.\n2. Ver o site") == "opixacimade5mil.verosite"
+
+
+def test_normalizar_nome_ignora_seletor_de_variacao_e_espacos():
+    from conectores.whatsapp.src.utils.playwright_utils import normalizar_nome
+
+    assert normalizar_nome("Maria❤️") == normalizar_nome("Maria❤") == "Maria❤"
+    assert normalizar_nome("  Maria   Silva ") == "Maria Silva"
+    assert normalizar_nome(None) == ""
