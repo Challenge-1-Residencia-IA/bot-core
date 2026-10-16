@@ -1,0 +1,2 @@
+# Dependências usadas só pelo deploy na VM (registro das avaliações no MLflow do DagsHub).
+mlflow-skinny
