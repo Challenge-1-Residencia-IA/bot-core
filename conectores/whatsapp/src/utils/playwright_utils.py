@@ -22,6 +22,7 @@ messages, these selectors are the first thing to check.
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 from typing import List, Dict, Optional, Union
@@ -204,11 +205,28 @@ async def chat_eh_grupo(page: Page) -> bool:
 # ---------------------------------------------------------------------------
 # Message handling helpers
 # ---------------------------------------------------------------------------
-_JS_ENVIO_CONFIRMADO = "({antes, texto}) => {" + _JS_LINHAS + """
-  const norm = t => t.replace(/\\s+/g, ' ').trim();
-  return linhas().some(l => l.saida && !antes.includes(l.id) && norm(l.texto) === norm(texto)
-    && l.status.some(st => !['pendente', 'pending'].includes(st)));
+_JS_ENVIADAS_NOVAS = "(antes) => {" + _JS_LINHAS + """
+  return linhas().filter(l => l.saida && !antes.includes(l.id)
+    && l.status.some(st => !['pendente', 'pending'].includes(st))).map(l => l.texto);
 }"""
+
+_FORMATACAO = re.compile(r"[*_~`•]")
+_MARCADOR_LISTA = re.compile(r"(?m)^\s*(\d+[.)]|[-–])\s+")
+
+
+def texto_comparavel(texto: str) -> str:
+    """Text as WhatsApp renders it, for comparing a sent message with what is on screen.
+
+    WhatsApp hides the formatting marks (``*bold*``, ``_italic_``), turns
+    ``•``/``1.`` lines into native lists and may repeat the text in the DOM, so
+    marks, list markers and all whitespace are dropped and the caller checks containment.
+    """
+    return re.sub(r"\s+", "", _FORMATACAO.sub("", _MARCADOR_LISTA.sub("", texto or ""))).casefold()
+
+
+def envio_confirmado(texto: str, enviadas: List[str]) -> bool:
+    esperado = texto_comparavel(texto)
+    return bool(esperado) and any(esperado in texto_comparavel(t) for t in enviadas)
 
 
 async def enviar_mensagem(page: Page, texto: str, chat_nome: Optional[str] = None,
@@ -232,7 +250,7 @@ async def enviar_mensagem(page: Page, texto: str, chat_nome: Optional[str] = Non
     await editor.press("Enter")
     limite = time.monotonic() + timeout_confirmacao
     while time.monotonic() < limite:
-        if await page.evaluate(_JS_ENVIO_CONFIRMADO, {"antes": antes, "texto": texto}):
+        if envio_confirmado(texto, await page.evaluate(_JS_ENVIADAS_NOVAS, antes)):
             return
         await asyncio.sleep(0.4)
     raise RuntimeError("envio_nao_confirmado")
