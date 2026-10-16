@@ -21,6 +21,8 @@ sentence-transformers
 # Banco (Postgres + pgvector)
 psycopg[binary]
 pgvector
+sqlalchemy
+alembic
 
 # Desenvolvimento
 pytest
