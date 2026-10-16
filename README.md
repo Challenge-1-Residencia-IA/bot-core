@@ -13,15 +13,16 @@ WhatsApp Web ◄──► conector (Playwright) ──job "analisar_mensagem"─
                                                          LangGraph ◄────────────────┘
                                                            guardrail de entrada  (padrões + NeMo Guardrails)
                                                            extração              (LLM: afirmações, natureza, técnicas)
-                                                           busca                 (checagens publicadas, depois a web)
+                                                           busca                 (base de checagens: busca híbrida; depois a web)
                                                            síntese               (LLM: técnicas, citações, leitura lateral)
                                                            guardrail de saída    (sem veredito, avisos de tema de risco)
 ```
 
-- **Conector** (`conectores/whatsapp/`): lê o WhatsApp Web com Playwright, só nos contatos permitidos, envia cada mensagem ao núcleo e entrega a resposta. Não chama o LLM. Detalhes em [`conectores/whatsapp/README.md`](conectores/whatsapp/README.md).
+- **Conector** (`conectores/whatsapp/`): lê o WhatsApp Web com Playwright (só os contatos permitidos ou, no modo aberto, qualquer conversa individual, com limite de sessões e fila de espera), envia cada mensagem ao núcleo e entrega a resposta. Não chama o LLM. Detalhes em [`conectores/whatsapp/README.md`](conectores/whatsapp/README.md).
 - **Núcleo** (`app/`): worker ARQ que executa o grafo LangGraph. O contrato entre as partes (nome do job, fila, formato do pedido e do resultado) fica em `app/contrato.py`, importado pelos dois lados.
-- **LLM**: Qwen 2.5 7B servido pelo Ollama, acessado por HTTP (`OLLAMA_URL`). O núcleo não precisa rodar na mesma máquina do modelo; em produção, a máquina com o Ollama é acessada pela rede privada (Tailscale).
-- **Docker**: Redis (fila) e PostgreSQL + pgvector local (base de checagens; em produção, Neon). O Ollama roda nativo, com acesso direto à GPU.
+- **LLM**: Qwen 2.5 7B servido pelo Ollama, acessado por HTTP. O núcleo não precisa rodar na mesma máquina do modelo; em produção, as máquinas com o Ollama são acessadas pela rede privada (Tailscale). `OLLAMA_URLS` aceita vários servidores em ordem de preferência: se o principal não responde, o núcleo passa para o seguinte (*failover*).
+- **Base de checagens**: PostgreSQL + pgvector (Neon em produção), com busca híbrida: similaridade vetorial (embeddings `multilingual-e5-base`, índice HNSW) e busca textual em português, combinadas por *Reciprocal Rank Fusion*. Detalhes em [`app/rag/README.md`](app/rag/README.md).
+- **Docker** (ambiente local): Redis (fila) e PostgreSQL + pgvector. O Ollama roda nativo, com acesso direto à GPU.
 
 ### O que a resposta traz
 
@@ -49,21 +50,23 @@ app/
 ├── worker.py         # worker ARQ: job analisar_mensagem
 ├── graph/            # LangGraph: estado, nós e grafo (grafo.py)
 ├── guardrails/       # entrada, privacidade, blindagem, saída e configuração do NeMo
-├── rag/              # busca de evidências, seleção de trechos e síntese da tutora
+├── rag/              # busca na base e na web, embeddings, seleção de trechos e síntese da tutora
 ├── prompts/          # prompts versionados
+├── db/               # acesso ao PostgreSQL + pgvector (base de checagens)
+├── ingestao/         # preenchimento da base: FakeTrue.Br, coletor RSS e auditoria
 ├── main.py           # FastAPI (endpoints de teste; não usado pelo fluxo do WhatsApp)
-├── db/              # acesso ao PostgreSQL + pgvector (base de checagens)
-├── ingestao/        # scripts que preenchem a base de checagens
-├── search/          # esqueleto: provedores de busca
+├── search/           # esqueleto: provedores de busca
 └── telegram/         # esqueleto antigo, do canal descartado
 
 conectores/whatsapp/  # conector de WhatsApp Web (Playwright)
+deploy/               # deploy na VM: implantação, portão de avaliação, reversão, painel e unidades systemd
 migrations/           # migrações do banco (Alembic)
 
 tests/
-├── guardrails/, rag/, graph/   # testes unitários (sem rede e sem LLM)
-├── db/                         # migrações num Postgres de teste (TEST_DATABASE_URL)
-├── dataset/, eval/             # esqueletos de dataset e avaliação
+├── guardrails/, rag/, graph/, ingestao/   # testes unitários (sem rede e sem LLM)
+├── db/                                    # banco num Postgres de teste (TEST_DATABASE_URL)
+├── deploy/                                # scripts de deploy e portão de avaliação
+├── dataset/, eval/                        # esqueletos de dataset e avaliação
 ```
 
 ## Ambiente local
@@ -95,7 +98,7 @@ python -m conectores.whatsapp.src.main
 - No primeiro uso, escaneie o QR code na janela do Chromium com o celular do **número dedicado do bot**. A sessão fica salva em `conectores/whatsapp/whatsapp_profile/` (fora do git).
 - O conector começa em **modo simulação (dry-run)**: as respostas aparecem só no terminal. Para enviar de verdade, inicie com `WHATSAPP_DRY_RUN=false` ou digite `d` + Enter no terminal do conector.
 - Uma análise leva cerca de 20 a 30 s com o Qwen 7B numa GPU local. Recusas dos guardrails são imediatas.
-- Se o Ollama não responder, o usuário recebe uma mensagem de indisponibilidade.
+- Se nenhum servidor do Ollama responder, o usuário recebe uma mensagem de indisponibilidade.
 
 ### Banco de dados
 
@@ -124,6 +127,13 @@ python -m app.ingestao.faketrue \
 
 `--limite N` processa só os N primeiros pares (teste) e `--sem-download` usa apenas o texto do corpus.
 
+**Coletor RSS** (`app/ingestao/rss.py`): acrescenta as checagens novas publicadas nos feeds do Boatos.org, E-farsas, Aos Fatos e Agência Lupa. Itens que não são checagens (como resultados de apuração eleitoral) são descartados antes do download, e a coleta para quando o banco passa de 450 MB, abaixo da cota do plano gratuito do Neon. Em produção, roda de hora em hora por um timer do systemd ([`deploy/systemd/README.md`](deploy/systemd/README.md)).
+
+```bash
+python -m app.ingestao.rss                                # itens atuais dos feeds
+python -m app.ingestao.rss --historico --max-paginas 500  # carga do histórico
+```
+
 Páginas que hoje levam a outro conteúdo (redirecionamento para a página inicial do site, galerias de fotos) são recusadas, e o documento fica com o texto do corpus. `--atualizar --url <URL>` refaz documentos específicos.
 
 **Auditoria** (`app/ingestao/auditoria.py`): lista documentos cujo texto talvez não seja a matéria da URL (endereço sem relação com o título e o texto, anos citados muito depois da publicação, galerias), para revisão manual. `--corrigir-metadados` reaplica as regras atuais de agência, natureza e título sem recalcular embeddings, por exemplo depois de incluir uma agência em `AGENCIAS_CHECAGEM`.
@@ -149,10 +159,15 @@ print(r.resposta_texto)
 |---|---|---|
 | `OLLAMA_URL` | `http://localhost:11434` | Endereço do Ollama |
 | `OLLAMA_MODEL` | `qwen2.5:7b` | Modelo usado na extração, na síntese e no NeMo |
+| `OLLAMA_URLS` | vazio | Vários servidores em ordem de preferência, separados por vírgula, cada um com o modelo opcional depois de `#` (ex.: `http://pc-principal.internal:11434#qwen2.5:latest,http://mac-reserva.internal:11434`). Quando definida, substitui `OLLAMA_URL` e `OLLAMA_MODEL`; o NeMo usa o primeiro |
 | `LLM_TIMEOUT_S` | `180` | Tempo máximo de uma chamada ao LLM |
 | `REDIS_URL` | `redis://localhost:6379/0` | Fila ARQ |
 | `GUARDRAILS_NEMO` | `1` | `0` desliga a etapa do NeMo (fica só a verificação por padrões) |
-| `DATABASE_URL` | vazio | PostgreSQL + pgvector (Neon em produção) |
+| `DATABASE_URL` | vazio | PostgreSQL + pgvector (Neon em produção). Vazia, a busca segue só pela web |
+| `EMBEDDING_MODEL` | `intfloat/multilingual-e5-base` | Modelo de embedding da base; trocar exige reindexar |
+| `BASE_LIMIAR_TRECHO` | `0.85` | Similaridade mínima entre a afirmação e um trecho da base |
+| `BASE_LIMIAR_BOATO` | `0.93` | Similaridade mínima entre a mensagem e um boato conhecido |
+| `BASE_CHECAGEM_RECENTE_MESES` | `6` | Idade a partir da qual a checagem mais recente da base leva à busca na web |
 
 As variáveis do conector estão no README dele.
 
@@ -193,13 +208,7 @@ merge na main → CI (lint + testes) → Deploy (.github/workflows/deploy.yml)
 - **Voltar uma versão:** Actions → **Reverter** → Run workflow, com o alvo `campea` (a última aprovada pelo portão), `anterior` ou um commit.
 - **Implantar de novo à mão:** Actions → Deploy → Run workflow (vazio = commit mais recente da `main`).
 
-Segredos usados (Settings → Secrets → Actions): `TS_OAUTH_CLIENT_ID` e `TS_OAUTH_SECRET` (cliente OAuth do Tailscale com escopo `auth_keys` e tag `tag:ci`), `DEPLOY_SSH_KEY` (chave autorizada na VM só para o comando forçado) e `DEPLOY_SSH_KNOWN_HOSTS` (chave pública do servidor SSH da VM). Os detalhes da VM estão em [`deploy/systemd/README.md`](deploy/systemd/README.md).
-
-## Estado e próximos passos
-
-- Funciona localmente de ponta a ponta: WhatsApp → fila → grafo com Qwen e busca na web → resposta.
-- Pendentes: aviso de "analisando" para o usuário enquanto a resposta é gerada; monitoramento das análises em produção (Langfuse).
-- O conector depende da estrutura da página do WhatsApp Web, que muda sem aviso. Quando ele deixar de ver mensagens, comece pelos seletores em `conectores/whatsapp/src/utils/playwright_utils.py`.
+Segredos usados (Settings → Secrets → Actions): `TS_OAUTH_CLIENT_ID` e `TS_OAUTH_SECRET` (cliente OAuth do Tailscale com escopo `auth_keys` e tag `tag:ci`), `DEPLOY_SSH_KEY` (chave autorizada na VM só para o comando forçado) `DEPLOY_SSH_KNOWN_HOSTS` (chave pública do servidor SSH da VM) e `DEPLOY_HOST` (endereço da VM na tailnet). A parte comum ao Deploy e ao Reverter (entrar na tailnet e enviar o comando à VM) fica no workflow reutilizável `_comando-vm.yml`, cujas execuções aparecem dentro deles. Os detalhes da VM, do coletor RSS e do painel de controle estão em [`deploy/systemd/README.md`](deploy/systemd/README.md).
 
 ## Modelos e dados
 
