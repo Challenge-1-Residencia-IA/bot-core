@@ -3,7 +3,7 @@
 #
 # A chave do GitHub Actions só consegue executar estas três ações, com argumentos validados:
 #   implantar <commit>        roda o deploy/implantar.sh do próprio commit (que precisa estar na main)
-#   reverter anterior|<commit>
+#   reverter anterior|campea|<commit>
 #   listar
 set -euo pipefail
 
@@ -28,7 +28,7 @@ case "${ACAO:-}" in
         bash "$SCRIPT" "$SHA"
         ;;
     reverter)
-        [[ "${ARG:-}" =~ ^(anterior|[0-9a-f]{7,40})$ ]] || { echo "alvo inválido"; exit 2; }
+        [[ "${ARG:-}" =~ ^(anterior|campea|[0-9a-f]{7,40})$ ]] || { echo "alvo inválido"; exit 2; }
         bash "$RUNTIME/bin/reverter.sh" "$ARG"
         ;;
     listar)

@@ -71,18 +71,43 @@ na `main`:
 4. Confere se a release importa e roda o preflight (Redis e banco obrigatórios; o Ollama só gera
    aviso, porque roda no PC do mantenedor). Se algo falhar, a implantação é abortada e a release no ar
    continua a mesma.
-5. Atualiza as unidades `bot-worker` e `bot-conector` que mudaram, troca o link `bot-core-current` de
+5. **Portão de avaliação** (champion/challenger), descrito abaixo. Reprovada, a release não vai ao ar.
+6. Atualiza as unidades `bot-worker` e `bot-conector` que mudaram, troca o link `bot-core-current` de
    forma atômica e reinicia os dois serviços.
-6. Espera até 90 s os serviços ficarem ativos (o systemd tenta de novo a cada 15 s) e roda o teste de fumaça (`deploy/fumaca.py`): uma
+7. Espera até 90 s os serviços ficarem ativos (o systemd tenta de novo a cada 15 s) e roda o teste de fumaça (`deploy/fumaca.py`): uma
    saudação enviada pela fila, que o worker responde sem LLM. Se falhar, volta sozinho para a release
    anterior.
-7. Mantém as 5 releases mais recentes, além da atual e da anterior.
+8. Mantém as 5 releases mais recentes, além da atual, da anterior e da campeã.
 
 Cada implantação, reversão ou aborto fica em `~/bot-core-runtime/releases.jsonl`. Para ver o
 histórico: `~/bot-core-runtime/.venv/bin/python ~/bot-core-runtime/bin/releases.py listar`.
 
-Para voltar a uma release que ainda está no disco: `~/bot-core-runtime/bin/reverter.sh anterior` ou
+Para voltar a uma release que ainda está no disco: `~/bot-core-runtime/bin/reverter.sh anterior`,
+`~/bot-core-runtime/bin/reverter.sh campea` (a última versão boa aprovada pelo portão) ou
 `~/bot-core-runtime/bin/reverter.sh <commit>`.
+
+### Portão de avaliação (champion/challenger)
+
+`deploy/avaliar_busca.py` roda a busca da release nova contra o banco de produção, só com leitura e
+sem LLM, para os itens do golden set (`~/dados-ingestao/golden_set_v1.jsonl`):
+
+| Métrica | O que mede |
+|---|---|
+| `top5` (**portão**) | A checagem esperada aparece entre as 5 fontes devolvidas |
+| `top1` | A checagem esperada vem em 1º lugar (só registrada: outra agência pode ter checado o mesmo boato) |
+| `ruido_fora_da_base` | Com a checagem esperada escondida (20% dos itens), a busca ainda devolve algo (IA-07) |
+| `tempo_mediana_s` | Tempo mediano de uma busca |
+
+A release nova é aprovada se o `top5` for de pelo menos 85% (`BOT_DEPLOY_PISO`) e não ficar mais de 3
+pontos (`BOT_DEPLOY_MARGEM_CAMPEA`) abaixo da campeã. A campeã é **reavaliada no mesmo banco, no mesmo
+momento**, porque o coletor RSS muda a base de hora em hora: assim só o código muda entre as duas
+avaliações. Aprovada com nota igual ou maior, a release nova vira a campeã. A avaliação leva cerca de
+70 s por release.
+
+As notas ficam em `releases.jsonl` e, se existir `~/bot-core-runtime/mlflow.env`
+(`MLFLOW_TRACKING_URI`, `MLFLOW_TRACKING_USERNAME` e `MLFLOW_TRACKING_PASSWORD` com um token do
+DagsHub), também no experimento `bot-core-deploy` do MLflow, com gráficos ao longo do tempo. Uma falha no
+MLflow não barra o deploy.
 
 O coletor RSS não é reiniciado pelo deploy: o timer usa a release no ar a partir da próxima execução.
 

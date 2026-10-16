@@ -3,13 +3,14 @@
 # ~/bot-core-current, reinicia worker e conector e roda o teste de fumaça.
 #
 # Uso: deploy/reverter.sh anterior        (a release que estava no ar antes da atual)
+#      deploy/reverter.sh campea          (a última release promovida a campeã pelo portão)
 #      deploy/reverter.sh <commit>        (7 a 40 caracteres; ver deploy/releases.py listar)
 #
 # As migrações não são desfeitas: elas seguem o padrão expand/contract (ver deploy/systemd/README.md),
 # então a release antiga continua funcionando com o esquema novo.
 set -euo pipefail
 
-ALVO="${1:?uso: reverter.sh anterior|<commit>}"
+ALVO="${1:?uso: reverter.sh anterior|campea|<commit>}"
 BASE="${BOT_DEPLOY_BASE:-$HOME}"
 RELEASES="$BASE/bot-core-releases"
 ATUAL="$BASE/bot-core-current"
@@ -25,9 +26,9 @@ flock -n 9 || { log "Outro deploy ou reversão em andamento"; exit 75; }
 
 ATUAL_DIR="$(readlink -f "$ATUAL")"
 REGISTRO_PY="$RUNTIME/bin/releases.py"
-if [[ "$ALVO" == "anterior" ]]; then
-    RELEASE="$("$PY" "$REGISTRO_PY" anterior)"
-    [[ -n "$RELEASE" ]] || falhar "não há release anterior no disco"
+if [[ "$ALVO" == "anterior" || "$ALVO" == "campea" ]]; then
+    RELEASE="$("$PY" "$REGISTRO_PY" "$ALVO")"
+    [[ -n "$RELEASE" ]] || falhar "não há release $ALVO no disco"
 else
     [[ "$ALVO" =~ ^[0-9a-f]{7,40}$ ]] || falhar "commit inválido: $ALVO"
     RELEASE="${ALVO:0:7}"

@@ -74,3 +74,73 @@ def test_anterior_inclui_release_colocada_no_ar_antes_do_registro(releases):
     releases.registrar("bbbbbbb" + "0" * 33, "implantada", anterior="aaaaaaa")
     colocar_no_ar(releases, "bbbbbbb")
     assert releases.anterior() == "aaaaaaa"
+
+
+# Portão champion/challenger ---------------------------------------------------------------------------
+
+def implantar(modulo, release, top5, campea=False):
+    (modulo.RELEASES / release).mkdir(exist_ok=True)
+    modulo.registrar(release + "0" * 33, "implantada", metricas={"top1": top5 - 0.1, "top5": top5}, campea=campea)
+
+
+def test_portao_sem_campea_aprova_e_promove_acima_do_piso(releases):
+    decisao = releases.portao({"top5": 0.89}, piso=0.85, margem=0.03)
+    assert decisao["aprovada"] and decisao["promover"] and decisao["campea"] is None
+
+
+def test_portao_usa_top5_e_nao_barra_por_top1(releases):
+    decisao = releases.portao({"top1": 0.70, "top5": 0.89}, piso=0.85, margem=0.03)
+    assert decisao["aprovada"] and decisao["metrica"] == "top5"
+
+
+def test_portao_barra_abaixo_do_piso(releases):
+    decisao = releases.portao({"top5": 0.84}, piso=0.85, margem=0.03)
+    assert not decisao["aprovada"] and "piso" in decisao["motivo"]
+
+
+def test_portao_aprova_dentro_da_margem_sem_promover(releases):
+    implantar(releases, "aaaaaaa", 0.90, campea=True)
+    decisao = releases.portao({"top5": 0.88}, piso=0.85, margem=0.03)
+    assert decisao["aprovada"] and not decisao["promover"] and decisao["campea"] == "aaaaaaa"
+
+
+def test_portao_barra_mais_de_3_pontos_abaixo_da_campea(releases):
+    implantar(releases, "aaaaaaa", 0.95, campea=True)
+    decisao = releases.portao({"top5": 0.90}, piso=0.85, margem=0.03)
+    assert not decisao["aprovada"] and "campeã aaaaaaa" in decisao["motivo"]
+
+
+def test_portao_promove_empate_ou_melhora(releases):
+    implantar(releases, "aaaaaaa", 0.89, campea=True)
+    assert releases.portao({"top5": 0.89}, piso=0.85, margem=0.03)["promover"]
+
+
+def test_portao_compara_com_a_campea_reavaliada_no_mesmo_banco(releases):
+    # A nota registrada da campeã (95%) é de uma base antiga; reavaliada hoje, ela tem 88%.
+    implantar(releases, "aaaaaaa", 0.95, campea=True)
+    decisao = releases.portao({"top5": 0.89}, piso=0.85, margem=0.03, metricas_campea={"top5": 0.88})
+    assert decisao["aprovada"] and decisao["promover"] and decisao["origem_nota_campea"] == "reavaliada agora"
+
+
+def test_portao_barra_avaliacao_sem_a_metrica(releases):
+    assert not releases.portao({"top1": 0.9}, piso=0.85, margem=0.03)["aprovada"]
+
+
+def test_campea_ignora_release_apagada_e_usa_a_anterior(releases):
+    implantar(releases, "aaaaaaa", 0.84, campea=True)
+    implantar(releases, "bbbbbbb", 0.86, campea=True)
+    implantar(releases, "ccccccc", 0.85)
+    assert releases.campea()["release"] == "bbbbbbb"
+    (releases.RELEASES / "bbbbbbb").rmdir()
+    assert releases.campea()["release"] == "aaaaaaa"
+
+
+def test_listar_marca_no_ar_uma_vez_e_a_campea(releases):
+    implantar(releases, "aaaaaaa", 0.85, campea=True)
+    implantar(releases, "bbbbbbb", 0.84)
+    releases.registrar("aaaaaaa" + "0" * 33, "reversao_manual", anterior="bbbbbbb")
+    colocar_no_ar(releases, "aaaaaaa")
+    texto = releases.listar(10)
+    assert texto.count("← no ar") == 1 and texto.count("★ campeã") == 1
+    linha_no_ar = next(linha for linha in texto.splitlines() if "← no ar" in linha)
+    assert "reversao_manual" in linha_no_ar
