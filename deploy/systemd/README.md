@@ -59,3 +59,45 @@ Para voltar uma versão, parar o conector e o worker, repontar `bot-core-current
 para a release anterior e reiniciar os serviços. Preservar o banco, arquivos de
 ambiente, perfil WhatsApp e registro de entregas. Na primeira implantação,
 parar os serviços novos mantém o checkout e a ingestão antigos disponíveis.
+
+## Deploy automatizado
+
+`deploy/implantar.sh <commit>` faz o processo acima sem passos manuais. Só aceita commits que estão
+na `main`:
+
+1. Cria a release em `~/bot-core-releases/<commit>` a partir do espelho `~/bot-core-runtime/repo.git`.
+2. Instala as dependências no venv só quando `requirements.txt` muda.
+3. Aplica as migrações com `~/bot-core-runtime/migracao.env`, a única credencial que altera o esquema.
+4. Confere se a release importa e roda o preflight (Redis, banco e Ollama). Se algo falhar, a
+   implantação é abortada e a release no ar continua a mesma.
+5. Atualiza as unidades `bot-worker` e `bot-conector` que mudaram, troca o link `bot-core-current` de
+   forma atômica e reinicia os dois serviços.
+6. Confere se os serviços ficaram ativos e roda o teste de fumaça (`python -m deploy.fumaca`): uma
+   saudação enviada pela fila, que o worker responde sem LLM. Se falhar, volta sozinho para a release
+   anterior.
+7. Mantém as 5 releases mais recentes, além da atual e da anterior.
+
+Cada implantação, reversão ou aborto fica em `~/bot-core-runtime/releases.jsonl`. Para ver o
+histórico: `~/bot-core-runtime/.venv/bin/python ~/bot-core-runtime/bin/releases.py listar`.
+
+Para voltar a uma release que ainda está no disco: `~/bot-core-runtime/bin/reverter.sh anterior` ou
+`~/bot-core-runtime/bin/reverter.sh <commit>`.
+
+O coletor RSS não é reiniciado pelo deploy: o timer usa a release no ar a partir da próxima execução.
+
+### Preparação única
+
+```bash
+deploy/preparar_vm.sh --url-migracao-de ~/bot-core/.env --chave /caminho/da/chave_deploy.pub
+```
+
+Cria o espelho do repositório, instala as ferramentas em `~/bot-core-runtime/bin`, grava a credencial de
+migração e autoriza a chave do GitHub Actions apenas para `comando_ssh.sh` (implantar, reverter e
+listar), sem shell, túnel ou encaminhamento.
+
+### Migrações compatíveis (expand/contract)
+
+A reversão troca só o código; o banco fica como está. Por isso cada migração precisa funcionar também
+com a release anterior: primeiro acrescentar (colunas, tabelas e índices novos, sem remover nem
+renomear nada em uso), e só numa implantação seguinte, quando nenhuma release no disco usar mais o
+item antigo, remover.
