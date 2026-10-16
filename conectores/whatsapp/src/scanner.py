@@ -377,6 +377,7 @@ async def scanner_aberto_loop(page, lock, config, fila_respostas: asyncio.Queue,
                     continue
                 async with lock:
                     if not await abrir_chat_por_nome(page, nome):
+                        logging.warning("⚠️ [Scanner] Conversa com mensagem não lida não abriu (%s)", _rotulo_chat(nome))
                         continue
                     if config["ignorar_grupos"] and await chat_eh_grupo(page):
                         logging.info("👥 [Scanner] Grupo ignorado")
