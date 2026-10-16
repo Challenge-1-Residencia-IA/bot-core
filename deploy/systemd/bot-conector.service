@@ -1,0 +1,20 @@
+[Unit]
+Description=Conector WhatsApp do bot
+After=network-online.target redis-server.service bot-worker.service
+Wants=network-online.target bot-worker.service
+Requires=redis-server.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/bot-core-current
+EnvironmentFile=/home/ubuntu/bot-core-runtime/conector.env
+ExecStart=/home/ubuntu/bot-core-runtime/.venv/bin/python -m conectores.whatsapp.src.main
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

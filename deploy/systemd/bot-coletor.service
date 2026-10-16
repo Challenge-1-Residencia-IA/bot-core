@@ -6,7 +6,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=ubuntu
-WorkingDirectory=/home/ubuntu/bot-core
-EnvironmentFile=/home/ubuntu/bot-core/.env
-ExecStart=/usr/bin/flock -n -E 0 /home/ubuntu/bot-core/.rss.lock /home/ubuntu/bot-core/.venv/bin/python -m app.ingestao.rss
+WorkingDirectory=/home/ubuntu/bot-core-current
+EnvironmentFile=/home/ubuntu/bot-core-runtime/coletor.env
+ExecStart=/usr/bin/flock -n -E 0 /home/ubuntu/bot-core/.rss.lock /home/ubuntu/bot-core-runtime/.venv/bin/python -m app.ingestao.rss
 TimeoutStartSec=45min
+UMask=0077

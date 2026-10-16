@@ -155,7 +155,8 @@ async def main():
         tasks.append(asyncio.create_task(
             scanner_loop(page, arq_pool, lock, CONFIG, fila_respostas, store), name="scanner"))
     tasks.append(asyncio.create_task(dispatcher_loop(page, lock, fila_respostas, store), name="dispatcher"))
-    tasks.append(asyncio.create_task(monitor_pause_input(), name="pause_listener"))
+    console_task = (asyncio.create_task(monitor_pause_input(), name="pause_listener")
+                    if sys.stdin.isatty() else None)
 
     # Signal handling – cancel all tasks on SIGINT/SIGTERM
     stop_event = asyncio.Event()
@@ -171,19 +172,22 @@ async def main():
             # Windows may not support add_signal_handler for all signals
             signal.signal(sig, lambda s, f: _signal_handler())
 
-    # Wait until a termination signal is received
-    await stop_event.wait()
-
-    # Cancel background tasks
-    for t in tasks:
-        t.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Close ARQ pool and Playwright resources
-    await arq_pool.close()
-    await fechar_navegador(browser)
-    await playwright.stop()
-    store.close()
+    stopped = asyncio.create_task(stop_event.wait())
+    try:
+        done, _ = await asyncio.wait([stopped, *tasks], return_when=asyncio.FIRST_COMPLETED)
+        if stopped not in done:
+            task = next(t for t in tasks if t in done)
+            await task
+            raise RuntimeError(f"Tarefa {task.get_name()} encerrou inesperadamente")
+    finally:
+        pending = [*tasks, stopped] + ([console_task] if console_task else [])
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        await arq_pool.close()
+        await fechar_navegador(browser)
+        await playwright.stop()
+        store.close()
     logging.info("✅ Bot stopped.")
 
 # ---------------------------------------------------------------------------
