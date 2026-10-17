@@ -1,6 +1,16 @@
-# bot-core
+<p align="center">
+  <img src="docs/assets/logo-sophia.png" alt="Sophia — Verificadora de fatos" width="180">
+</p>
 
-Aplicação principal do Challenge 1 (Residência IA): um bot de WhatsApp que ajuda a avaliar a confiabilidade de informações recebidas. Ele aponta técnicas de manipulação da mensagem, mostra o que checagens publicadas e outras fontes dizem (com citações literais) e sugere como conferir por conta própria. **Nunca dá veredito de verdadeiro ou falso**: a conclusão é do usuário. A documentação do produto está no repositório [`Documentacao`](https://github.com/Challenge-1-Residencia-IA/Documentacao).
+# Sophia — Verificadora de fatos
+
+A **Sophia** é uma assistente de WhatsApp que ajuda as pessoas a avaliar mensagens antes de acreditar nelas ou repassá-las. A pessoa encaminha um boato, uma corrente ou uma notícia, e a Sophia aponta as técnicas de manipulação do texto, mostra o que checagens já publicadas e outras fontes dizem (com citações literais) e sugere como conferir por conta própria. **Ela nunca dá veredito de verdadeiro ou falso**: a conclusão é de quem pergunta.
+
+A Sophia usa o Qwen 2.5 7B como está, sem treino, combinado com RAG sobre uma base de checagens de agências brasileiras, prompts e guardrails. Projeto do Challenge 1 da Residência em IA. Documentação completa: [challenge-1-residencia-ia.github.io/Documentacao](https://challenge-1-residencia-ia.github.io/Documentacao/).
+
+## bot-core
+
+Este repositório é a aplicação da Sophia em produção: o conector de WhatsApp, o núcleo de análise, o deploy e o CI/CD. Os dados, a análise exploratória e a avaliação estão no [`experimentos`](https://github.com/Challenge-1-Residencia-IA/experimentos); requisitos e arquitetura, no [`Documentacao`](https://github.com/Challenge-1-Residencia-IA/Documentacao).
 
 ## Arquitetura
 
